@@ -1,0 +1,5 @@
+name = "thruster-sim"
+compatibility_date = "2025-03-14"
+
+[assets]
+directory = "./propulsion-sim/dist"
