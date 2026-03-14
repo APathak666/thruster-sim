@@ -381,7 +381,9 @@ function OrbitalView({ trajectory, missionResult, thruster }) {
       b: 0.15 + (i % 5) * 0.06,
     }));
 
-    const isImpulsive = trajectory && trajectory.type === "impulsive";
+    const impulsiveCategories = ["Chemical", "NTP"];
+    const isImpulsive = trajectory && trajectory.type === "impulsive"
+      && thruster && impulsiveCategories.includes(thruster.category);
     const transitDays = (missionResult && missionResult.transitDays) || (trajectory && trajectory.transferDays) || 259;
     const earthPeriod = 365.25;
     const marsPeriod = 687;
