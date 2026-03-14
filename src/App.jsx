@@ -8,6 +8,10 @@ const AU = 1.496e11;
 const muSun = 1.327e20;
 const rEarth = 1.0 * AU;
 const rMars = 1.524 * AU;
+const muEarth = 3.986e14;
+const muMars = 4.283e13;
+const rParkEarth = 6578e3;  // 200 km LEO
+const rParkMars = 3690e3;   // 300 km Mars orbit
 
 // ─── THRUSTER DATABASE ───
 // VERIFIED = data from primary sources (SpaceX, NASA, manufacturer specs)
@@ -151,23 +155,16 @@ function computeMission(thruster, trajectory, payloadMass, propellantMass, numTh
   const jetPower = 0.5 * F * ve;
   const alpha = thruster.mass > 0 ? jetPower / (thruster.mass * numThrusters) : 0;
 
-  // Chemical & NTP do near-instantaneous burns → transit = coast time (fixed by trajectory)
-  // Everything else (EP, Fusion, etc.) → transit computed from thrust & mass (continuous burn)
-  const impulsiveCats = ["Chemical", "NTP"];
-  const canDoImpulsive = impulsiveCats.includes(thruster.category);
-
+  // Transit time: the greater of burn time and orbital mechanics coast time.
+  // High-thrust engines burn in seconds then coast → transit ≈ orbital transfer time.
+  // Low-thrust engines burn for months/years → transit ≈ burn time.
+  // No category-based special casing: the physics decides.
   let transitDays;
-  if (trajectory.type === "impulsive" && canDoImpulsive) {
-    transitDays = dvCapability >= dvRequired ? trajectory.transferDays : null;
+  if (dvCapability >= dvRequired && F > 0) {
+    const orbitalMin = trajectory.transferDays || 0;
+    transitDays = Math.max(burnTimeDays, orbitalMin);
   } else {
-    if (dvCapability >= dvRequired && F > 0) {
-      const avgMass = (m0 + (m0 - propUsed)) / 2;
-      const avgAccel = F / avgMass;
-      transitDays = dvRequired / avgAccel / 86400;
-      transitDays = Math.max(transitDays, burnTimeDays);
-    } else {
-      transitDays = null;
-    }
+    transitDays = null;
   }
 
   const dvSufficient = dvCapability >= dvRequired;
@@ -201,23 +198,75 @@ function formatDays(d) {
   return `${Math.round(d)}d`;
 }
 
-// Estimate total impulsive ΔV for Earth-Mars transfer at a given transit time
-// Interpolates from known conjunction-class data points (Lambert-problem solutions)
-function estimateDv(transitDays) {
-  const pts = [[90, 18000], [120, 12000], [180, 7000], [259, 5700]];
-  if (transitDays >= 259) return 5700; // Can't beat Hohmann
-  if (transitDays <= 60) return pts[0][1] * Math.pow(pts[0][0] / transitDays, 1.8);
-  if (transitDays <= pts[0][0]) {
-    const ratio = pts[0][0] / transitDays;
-    return pts[0][1] * Math.pow(ratio, 1.8);
+// Convert hyperbolic excess velocity to parking-orbit ΔV (Oberth effect)
+function vinfToDv(vinf, muBody, rPark) {
+  const vCirc = Math.sqrt(muBody / rPark);
+  const vHyp = Math.sqrt(2 * muBody / rPark + vinf * vinf);
+  return vHyp - vCirc;
+}
+
+// ─── LAMBERT SOLVER ───
+// Simplified: circular coplanar orbits, Type I transfer (perihelion departure)
+// Returns parking-orbit ΔVs consistent with TRAJECTORY_DB values
+function lambertSolver(transitDays) {
+  const T = transitDays * 86400;
+  const aHoh = (rEarth + rMars) / 2;
+  const THoh = Math.PI * Math.sqrt(aHoh * aHoh * aHoh / muSun);
+
+  // Hohmann helper
+  function hohmannDvs() {
+    const vDep = Math.sqrt(muSun * (2 / rEarth - 1 / aHoh));
+    const vArr = Math.sqrt(muSun * (2 / rMars - 1 / aHoh));
+    const vc1 = Math.sqrt(muSun / rEarth);
+    const vc2 = Math.sqrt(muSun / rMars);
+    const dv1 = vinfToDv(vDep - vc1, muEarth, rParkEarth);
+    const dv2 = vinfToDv(vc2 - vArr, muMars, rParkMars);
+    return { dv1, dv2, dvTotal: dv1 + dv2, transferDays: Math.round(THoh / 86400) };
   }
-  for (let i = 0; i < pts.length - 1; i++) {
-    if (transitDays >= pts[i][0] && transitDays <= pts[i + 1][0]) {
-      const f = (transitDays - pts[i][0]) / (pts[i + 1][0] - pts[i][0]);
-      return pts[i][1] + f * (pts[i + 1][1] - pts[i][1]);
-    }
+
+  // At or above Hohmann time → minimum energy (can't improve on Hohmann)
+  if (T >= THoh) return hohmannDvs();
+
+  // Binary search: find semi-major axis a that gives transfer time T
+  // Larger a → more energy → shorter transit (faster, shorter arc before reaching rMars)
+  let aLo = aHoh, aHi = rMars * 50;
+  for (let i = 0; i < 60; i++) {
+    const a = (aLo + aHi) / 2;
+    const e = 1 - rEarth / a;
+    if (e >= 1 || e <= 0) { aHi = a; continue; }
+    const p = a * (1 - e * e);
+    const cosNu = (p / rMars - 1) / e;
+    if (cosNu < -1 || cosNu > 1) { aLo = a; continue; }
+    const nu = Math.acos(cosNu);
+    const tanHalfE = Math.sqrt((1 - e) / (1 + e)) * Math.tan(nu / 2);
+    const E2 = 2 * Math.atan(tanHalfE);
+    const M = E2 - e * Math.sin(E2);
+    const Tc = Math.sqrt(a * a * a / muSun) * M;
+    if (Tc > T) aLo = a; else aHi = a;
   }
-  return 5700;
+
+  const a = (aLo + aHi) / 2;
+  const e = 1 - rEarth / a;
+  const p = a * (1 - e * e);
+  const sqMuP = Math.sqrt(muSun / p);
+  const cosNu2 = Math.max(-1, Math.min(1, (p / rMars - 1) / e));
+  const nu2 = Math.acos(cosNu2);
+  const sinNu2 = Math.sin(nu2);
+
+  // Departure (perihelion ν=0): tangential, v∞ = scalar
+  const vt1 = sqMuP * (1 + e);
+  const vc1 = Math.sqrt(muSun / rEarth);
+  const vinf1 = Math.abs(vt1 - vc1);
+
+  // Arrival (ν=ν₂): vector v∞ with radial component
+  const vr2 = sqMuP * e * sinNu2;
+  const vt2 = sqMuP * (1 + e * cosNu2);
+  const vc2 = Math.sqrt(muSun / rMars);
+  const vinf2 = Math.sqrt(vr2 * vr2 + (vt2 - vc2) * (vt2 - vc2));
+
+  const dv1 = vinfToDv(vinf1, muEarth, rParkEarth);
+  const dv2 = vinfToDv(vinf2, muMars, rParkMars);
+  return { dv1, dv2, dvTotal: dv1 + dv2, transferDays: transitDays };
 }
 
 // ─── STYLES ───
@@ -867,13 +916,12 @@ export default function App() {
   const missionThruster = thrusters.find(t => t.id === missionThrusterId) || thrusters[0];
   const missionTrajectory = missionTrajId === "custom"
     ? (() => {
-        const dvTotal = Math.round(estimateDv(customTrajDays));
-        const dv1 = Math.round(dvTotal * 0.58);
-        const dv2 = dvTotal - dv1;
+        const lambert = lambertSolver(customTrajDays);
         return {
           id: "custom", name: `Custom (${customTrajDays}d)`, type: "impulsive",
-          dv1, dv2, dvTotal, transferDays: customTrajDays, targetTransitDays: customTrajDays,
-          description: `Custom ${customTrajDays}-day conjunction-class transfer. ΔV estimated from Lambert-problem interpolation.`,
+          dv1: lambert.dv1, dv2: lambert.dv2, dvTotal: lambert.dvTotal,
+          transferDays: lambert.transferDays, targetTransitDays: customTrajDays,
+          description: `Custom ${customTrajDays}-day transfer. ΔV from Lambert solver (circular coplanar, perihelion departure, Oberth-corrected).`,
         };
       })()
     : TRAJECTORY_DB.find(t => t.id === missionTrajId) || TRAJECTORY_DB[0];
