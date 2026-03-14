@@ -363,7 +363,7 @@ function ThrusterCard({ t, selected, onSelect, compact }) {
 }
 
 // ─── ORBITAL VISUALIZATION ───
-function OrbitalView({ trajectory, missionResult }) {
+function OrbitalView({ trajectory, missionResult, thruster }) {
   const canvasRef = useRef(null);
   const animRef = useRef(null);
 
@@ -381,27 +381,37 @@ function OrbitalView({ trajectory, missionResult }) {
       b: 0.15 + (i % 5) * 0.06,
     }));
 
-    // transit time in days (default 259 for Hohmann)
+    const isImpulsive = trajectory && trajectory.type === "impulsive";
     const transitDays = (missionResult && missionResult.transitDays) || (trajectory && trajectory.transferDays) || 259;
     const earthPeriod = 365.25;
     const marsPeriod = 687;
-
-    // how far each planet moves during transit (radians)
     const earthSweep = (transitDays / earthPeriod) * 2 * Math.PI;
     const marsSweep = (transitDays / marsPeriod) * 2 * Math.PI;
 
-    // Earth departs from right side (angle 0)
     const earthDepart = 0;
-    // transfer arc goes from earthDepart → earthDepart + π (half ellipse)
     const arrivalAngle = earthDepart + Math.PI;
-    // Mars must BE at arrivalAngle when spacecraft arrives
-    // so at departure, Mars is at arrivalAngle - marsSweep
     const marsDepart = arrivalAngle - marsSweep;
 
-    // animation: 360 frames for transit, 120 frames hold at arrival, then reset
+    // burn duration as fraction of transit (for visualizing burn arcs)
+    const burnFrac = missionResult ? Math.min(missionResult.burnTimeDays / transitDays, 1) : 0;
+
     const TRANSIT_FRAMES = 360;
     const HOLD_FRAMES = 120;
     const TOTAL_FRAMES = TRANSIT_FRAMES + HOLD_FRAMES;
+
+    // helper: position on transfer ellipse at angle theta (0=perihelion/Earth, π=aphelion/Mars)
+    const rA = scale;
+    const rB = scale * 1.524;
+    const sma = (rA + rB) / 2;
+    const c2 = sma - rA;
+    const ecc = c2 / sma;
+    function ellipseR(theta) {
+      return (sma * (1 - ecc * ecc)) / (1 + ecc * Math.cos(theta));
+    }
+    function ellipseXY(theta) {
+      const r = ellipseR(theta);
+      return [cx + Math.cos(earthDepart + theta) * r, cy + Math.sin(earthDepart + theta) * r];
+    }
 
     let t = 0;
     function draw() {
@@ -421,7 +431,7 @@ function OrbitalView({ trajectory, missionResult }) {
       ctx.fillStyle = grad;
       ctx.beginPath(); ctx.arc(cx, cy, 16, 0, Math.PI * 2); ctx.fill();
 
-      // Earth & Mars orbits
+      // orbits
       ctx.strokeStyle = "#3b82f622";
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(cx, cy, scale, 0, Math.PI * 2); ctx.stroke();
@@ -429,10 +439,8 @@ function OrbitalView({ trajectory, missionResult }) {
       ctx.beginPath(); ctx.arc(cx, cy, scale * 1.524, 0, Math.PI * 2); ctx.stroke();
 
       const frame = t % TOTAL_FRAMES;
-      // progress 0→1 during transit, clamped at 1 during hold
       const progress = Math.min(frame / TRANSIT_FRAMES, 1);
 
-      // planet positions synchronized with transfer
       const eAngle = earthDepart + progress * earthSweep;
       const mAngle = marsDepart + progress * marsSweep;
 
@@ -453,63 +461,145 @@ function OrbitalView({ trajectory, missionResult }) {
       ctx.fillStyle = "#fca5a5";
       ctx.fillText("Mars", mx + 7, my + 3);
 
-      // Transfer ellipse
       if (trajectory) {
-        const rA = scale;
-        const rB = scale * 1.524;
-        const a = (rA + rB) / 2;
-        const c2 = a - rA;
-        const ecc = c2 / a;
-
-        // full dashed arc
-        ctx.strokeStyle = "#10b98144";
+        // full dashed transfer arc
+        ctx.strokeStyle = "#10b98133";
         ctx.lineWidth = 1.5;
         ctx.setLineDash([5, 5]);
         ctx.beginPath();
         for (let i = 0; i <= 80; i++) {
-          const theta = (i / 80) * Math.PI;
-          const r = (a * (1 - ecc * ecc)) / (1 + ecc * Math.cos(theta));
-          const px = cx + Math.cos(earthDepart + theta) * r;
-          const py = cy + Math.sin(earthDepart + theta) * r;
+          const [px, py] = ellipseXY((i / 80) * Math.PI);
           if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
         }
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // departure marker
-        const depX = cx + Math.cos(earthDepart) * scale;
-        const depY = cy + Math.sin(earthDepart) * scale;
-        ctx.strokeStyle = "#3b82f644";
-        ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.arc(depX, depY, 7, 0, Math.PI * 2); ctx.stroke();
-        ctx.fillStyle = "#94a3b8";
-        ctx.font = "9px monospace";
-        ctx.fillText("TLI", depX + 10, depY - 6);
+        if (isImpulsive) {
+          // ═══ IMPULSIVE MODE ═══
+          // departure burn marker (TLI)
+          const [depX, depY] = ellipseXY(0);
+          ctx.strokeStyle = "#f59e0b";
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(depX, depY, 9, 0, Math.PI * 2); ctx.stroke();
+          // burn vector arrow
+          const burnDir = earthDepart + 0.15;
+          ctx.strokeStyle = "#f59e0b";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(depX, depY);
+          ctx.lineTo(depX + Math.cos(burnDir) * 22, depY + Math.sin(burnDir) * 22);
+          ctx.stroke();
+          // dv label
+          ctx.fillStyle = "#f59e0b";
+          ctx.font = "bold 10px monospace";
+          ctx.fillText(`ΔV₁ ${(trajectory.dv1 / 1000).toFixed(1)} km/s`, depX + 14, depY - 12);
+          ctx.fillStyle = "#94a3b8";
+          ctx.font = "9px monospace";
+          ctx.fillText("TLI burn", depX + 14, depY - 1);
 
-        // arrival marker
-        const arrX = cx + Math.cos(arrivalAngle) * scale * 1.524;
-        const arrY = cy + Math.sin(arrivalAngle) * scale * 1.524;
-        ctx.strokeStyle = "#ef444444";
-        ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.arc(arrX, arrY, 7, 0, Math.PI * 2); ctx.stroke();
-        ctx.fillStyle = "#94a3b8";
-        ctx.fillText("MOI", arrX + 10, arrY - 6);
+          // arrival burn marker (MOI)
+          const [arrX, arrY] = ellipseXY(Math.PI);
+          ctx.strokeStyle = "#f59e0b";
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(arrX, arrY, 9, 0, Math.PI * 2); ctx.stroke();
+          // burn vector arrow (retrograde at arrival)
+          const arrBurnDir = earthDepart + Math.PI - 0.15;
+          ctx.strokeStyle = "#f59e0b";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(arrX, arrY);
+          ctx.lineTo(arrX - Math.cos(arrBurnDir) * 22, arrY - Math.sin(arrBurnDir) * 22);
+          ctx.stroke();
+          ctx.fillStyle = "#f59e0b";
+          ctx.font = "bold 10px monospace";
+          ctx.fillText(`ΔV₂ ${(trajectory.dv2 / 1000).toFixed(1)} km/s`, arrX + 14, arrY - 12);
+          ctx.fillStyle = "#94a3b8";
+          ctx.font = "9px monospace";
+          ctx.fillText("MOI burn", arrX + 14, arrY - 1);
 
-        // spacecraft position on transfer arc
+          // coast label in the middle of the arc
+          const [midX, midY] = ellipseXY(Math.PI / 2);
+          ctx.fillStyle = "#475569";
+          ctx.font = "9px monospace";
+          ctx.fillText("coast phase", midX + 10, midY);
+
+        } else {
+          // ═══ CONTINUOUS THRUST MODE ═══
+          // draw thrust arc (colored segment showing where engines fire)
+          // for continuous thrust, engines burn the whole time
+          ctx.strokeStyle = "#f59e0b88";
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          const thrustArcEnd = Math.min(burnFrac, 1) * Math.PI;
+          for (let i = 0; i <= 60; i++) {
+            const theta = (i / 60) * thrustArcEnd;
+            const [px, py] = ellipseXY(theta);
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          }
+          ctx.stroke();
+
+          // thrust indicators (small arrows along the burn arc)
+          const numArrows = 6;
+          for (let i = 0; i < numArrows; i++) {
+            const frac = (i + 0.5) / numArrows;
+            if (frac > burnFrac) break;
+            const theta = frac * Math.PI;
+            const [ax, ay] = ellipseXY(theta);
+            const tangent = earthDepart + theta + Math.PI / 2;
+            ctx.strokeStyle = "#f59e0b66";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(ax + Math.cos(tangent) * 8, ay + Math.sin(tangent) * 8);
+            ctx.stroke();
+          }
+
+          // labels
+          const [depX, depY] = ellipseXY(0);
+          ctx.fillStyle = "#f59e0b";
+          ctx.font = "bold 10px monospace";
+          ctx.fillText("thrust start", depX + 12, depY - 8);
+
+          if (burnFrac < 0.95) {
+            // engine cuts off before arrival — mark cutoff
+            const cutTheta = burnFrac * Math.PI;
+            const [cutX, cutY] = ellipseXY(cutTheta);
+            ctx.strokeStyle = "#ef4444";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(cutX, cutY, 6, 0, Math.PI * 2); ctx.stroke();
+            ctx.fillStyle = "#ef4444";
+            ctx.font = "9px monospace";
+            ctx.fillText("cutoff", cutX + 10, cutY - 4);
+            ctx.fillText(`${Math.round(missionResult?.burnTimeDays || 0)}d burn`, cutX + 10, cutY + 8);
+          } else {
+            ctx.fillStyle = "#f59e0b";
+            ctx.font = "9px monospace";
+            const [midX, midY] = ellipseXY(Math.PI / 2);
+            ctx.fillText("continuous burn", midX + 10, midY - 4);
+            ctx.fillText(`${Math.round(missionResult?.burnTimeDays || 0)}d`, midX + 10, midY + 8);
+          }
+
+          const [arrX, arrY] = ellipseXY(Math.PI);
+          ctx.fillStyle = "#94a3b8";
+          ctx.font = "9px monospace";
+          ctx.fillText("arrival", arrX + 12, arrY - 8);
+
+          // total ΔV label
+          ctx.fillStyle = "#f59e0b";
+          ctx.font = "bold 10px monospace";
+          ctx.fillText(`ΔV ${(trajectory.dvTotal / 1000).toFixed(1)} km/s`, 16, H - 16);
+        }
+
+        // spacecraft position
         const scTheta = progress * Math.PI;
-        const scR = (a * (1 - ecc * ecc)) / (1 + ecc * Math.cos(scTheta));
-        const scX = cx + Math.cos(earthDepart + scTheta) * scR;
-        const scY = cy + Math.sin(earthDepart + scTheta) * scR;
+        const [scX, scY] = ellipseXY(scTheta);
 
-        // solid trail behind spacecraft
+        // solid trail
         ctx.strokeStyle = "#10b98166";
         ctx.lineWidth = 2;
         ctx.beginPath();
         for (let i = 0; i <= 60; i++) {
-          const tt = (i / 60) * scTheta;
-          const tr = (a * (1 - ecc * ecc)) / (1 + ecc * Math.cos(tt));
-          const tx = cx + Math.cos(earthDepart + tt) * tr;
-          const ty = cy + Math.sin(earthDepart + tt) * tr;
+          const [tx, ty] = ellipseXY((i / 60) * scTheta);
           if (i === 0) ctx.moveTo(tx, ty); else ctx.lineTo(tx, ty);
         }
         ctx.stroke();
@@ -523,6 +613,22 @@ function OrbitalView({ trajectory, missionResult }) {
         ctx.fillStyle = g2;
         ctx.beginPath(); ctx.arc(scX, scY, 12, 0, Math.PI * 2); ctx.fill();
 
+        // engine flame for continuous thrust (when still burning)
+        if (!isImpulsive && progress < burnFrac) {
+          const flameDir = earthDepart + scTheta - Math.PI / 2;
+          const flameG = ctx.createRadialGradient(
+            scX - Math.cos(flameDir) * 4, scY - Math.sin(flameDir) * 4, 0,
+            scX - Math.cos(flameDir) * 4, scY - Math.sin(flameDir) * 4, 8
+          );
+          flameG.addColorStop(0, "#f59e0baa");
+          flameG.addColorStop(0.5, "#ef444466");
+          flameG.addColorStop(1, "#ef444400");
+          ctx.fillStyle = flameG;
+          ctx.beginPath();
+          ctx.arc(scX - Math.cos(flameDir) * 6, scY - Math.sin(flameDir) * 6, 6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
         // day counter
         const day = Math.round(progress * transitDays);
         ctx.fillStyle = "#94a3b8";
@@ -532,22 +638,27 @@ function OrbitalView({ trajectory, missionResult }) {
 
       // info overlay
       if (trajectory) {
+        const overlayH = isImpulsive ? 96 : 82;
         ctx.fillStyle = "#0a0e17cc";
-        ctx.fillRect(8, 8, 190, 82);
+        ctx.fillRect(8, 8, 200, overlayH);
         ctx.strokeStyle = S.border;
         ctx.lineWidth = 1;
-        ctx.strokeRect(8, 8, 190, 82);
+        ctx.strokeRect(8, 8, 200, overlayH);
         ctx.fillStyle = "#10b981";
         ctx.font = "bold 11px monospace";
         ctx.fillText(trajectory.name, 16, 26);
+        ctx.fillStyle = isImpulsive ? "#f59e0b" : "#94a3b8";
+        ctx.font = "9px monospace";
+        ctx.fillText(isImpulsive ? "▸ Impulsive burns" : "▸ Continuous thrust", 16, 40);
         ctx.fillStyle = "#94a3b8";
         ctx.font = "10px monospace";
-        ctx.fillText(`ΔV: ${(trajectory.dvTotal / 1000).toFixed(1)} km/s`, 16, 42);
+        const y0 = 54;
+        ctx.fillText(`ΔV: ${(trajectory.dvTotal / 1000).toFixed(1)} km/s`, 16, y0);
         if (missionResult) {
-          ctx.fillText(`Transit: ${missionResult.transitDays ? Math.round(missionResult.transitDays) + "d" : "N/A"}`, 16, 56);
-          ctx.fillText(`Prop: ${formatNum(missionResult.propUsed, 0)} kg`, 16, 70);
+          ctx.fillText(`Transit: ${missionResult.transitDays ? Math.round(missionResult.transitDays) + "d" : "N/A"}`, 16, y0 + 14);
+          ctx.fillText(`Prop: ${formatNum(missionResult.propUsed, 0)} kg`, 16, y0 + 28);
           ctx.fillStyle = missionResult.feasible ? "#10b981" : "#ef4444";
-          ctx.fillText(missionResult.feasible ? "FEASIBLE" : "INFEASIBLE", 16, 84);
+          ctx.fillText(missionResult.feasible ? "FEASIBLE" : "INFEASIBLE", 16, y0 + 42);
         }
       }
 
@@ -556,7 +667,7 @@ function OrbitalView({ trajectory, missionResult }) {
     }
     draw();
     return () => cancelAnimationFrame(animRef.current);
-  }, [trajectory, missionResult]);
+  }, [trajectory, missionResult, thruster]);
 
   return <canvas ref={canvasRef} width={700} height={500} style={{ width: "100%", height: 500, borderRadius: 8, border: `1px solid ${S.border}` }} />;
 }
@@ -1059,7 +1170,7 @@ export default function App() {
         {tab === "orbit" && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 16 }}>
             <Card title="Earth–Mars Transfer Visualization">
-              <OrbitalView trajectory={missionTrajectory} missionResult={missionResult} />
+              <OrbitalView trajectory={missionTrajectory} missionResult={missionResult} thruster={missionThruster} />
               <p style={{ fontSize: 11, color: S.textDim, marginTop: 8 }}>
                 Animated Hohmann-like transfer orbit. Green dot = spacecraft. Orbit sizes to scale (1 AU : 1.524 AU).
                 Configured in Mission Planner: <b style={{ color: S.accent }}>{missionThruster.name}</b> on <b>{missionTrajectory.name}</b>.
