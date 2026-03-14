@@ -373,7 +373,7 @@ function OrbitalView({ trajectory, missionResult }) {
     const ctx = c.getContext("2d");
     const W = c.width, H = c.height;
     const cx = W / 2, cy = H / 2;
-    const scale = Math.min(W, H) / 3.6;
+    const scale = H / 3.4;
 
     // precompute static star positions
     const stars = Array.from({ length: 80 }, (_, i) => ({
@@ -383,8 +383,8 @@ function OrbitalView({ trajectory, missionResult }) {
     }));
 
     let t = 0;
-    // fixed departure angle — arc stays put, planets orbit through it
-    const departAngle = -Math.PI / 4;
+    // departure at right side, arc sweeps counterclockwise to the left
+    const departAngle = 0;
 
     function draw() {
       ctx.fillStyle = "#0a0e17";
@@ -527,7 +527,7 @@ function OrbitalView({ trajectory, missionResult }) {
     return () => cancelAnimationFrame(animRef.current);
   }, [trajectory, missionResult]);
 
-  return <canvas ref={canvasRef} width={600} height={600} style={{ width: "100%", height: "auto", aspectRatio: "1", borderRadius: 8, border: `1px solid ${S.border}` }} />;
+  return <canvas ref={canvasRef} width={700} height={500} style={{ width: "100%", height: 500, borderRadius: 8, border: `1px solid ${S.border}` }} />;
 }
 
 // ─── MAIN APP ───
