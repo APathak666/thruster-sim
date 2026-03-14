@@ -375,22 +375,39 @@ function OrbitalView({ trajectory, missionResult }) {
     const cx = W / 2, cy = H / 2;
     const scale = H / 3.4;
 
-    // precompute static star positions
     const stars = Array.from({ length: 80 }, (_, i) => ({
       x: (Math.sin(i * 137.5) * 0.5 + 0.5) * W,
       y: (Math.cos(i * 97.3) * 0.5 + 0.5) * H,
       b: 0.15 + (i % 5) * 0.06,
     }));
 
-    let t = 0;
-    // departure at right side, arc sweeps counterclockwise to the left
-    const departAngle = 0;
+    // transit time in days (default 259 for Hohmann)
+    const transitDays = (missionResult && missionResult.transitDays) || (trajectory && trajectory.transferDays) || 259;
+    const earthPeriod = 365.25;
+    const marsPeriod = 687;
 
+    // how far each planet moves during transit (radians)
+    const earthSweep = (transitDays / earthPeriod) * 2 * Math.PI;
+    const marsSweep = (transitDays / marsPeriod) * 2 * Math.PI;
+
+    // Earth departs from right side (angle 0)
+    const earthDepart = 0;
+    // transfer arc goes from earthDepart → earthDepart + π (half ellipse)
+    const arrivalAngle = earthDepart + Math.PI;
+    // Mars must BE at arrivalAngle when spacecraft arrives
+    // so at departure, Mars is at arrivalAngle - marsSweep
+    const marsDepart = arrivalAngle - marsSweep;
+
+    // animation: 360 frames for transit, 120 frames hold at arrival, then reset
+    const TRANSIT_FRAMES = 360;
+    const HOLD_FRAMES = 120;
+    const TOTAL_FRAMES = TRANSIT_FRAMES + HOLD_FRAMES;
+
+    let t = 0;
     function draw() {
       ctx.fillStyle = "#0a0e17";
       ctx.fillRect(0, 0, W, H);
 
-      // stars (fixed brightness, no flicker)
       for (const s of stars) {
         ctx.fillStyle = `rgba(255,255,255,${s.b})`;
         ctx.fillRect(s.x, s.y, 1, 1);
@@ -404,17 +421,22 @@ function OrbitalView({ trajectory, missionResult }) {
       ctx.fillStyle = grad;
       ctx.beginPath(); ctx.arc(cx, cy, 16, 0, Math.PI * 2); ctx.fill();
 
-      // Earth orbit
+      // Earth & Mars orbits
       ctx.strokeStyle = "#3b82f622";
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(cx, cy, scale, 0, Math.PI * 2); ctx.stroke();
-
-      // Mars orbit
       ctx.strokeStyle = "#ef444422";
       ctx.beginPath(); ctx.arc(cx, cy, scale * 1.524, 0, Math.PI * 2); ctx.stroke();
 
+      const frame = t % TOTAL_FRAMES;
+      // progress 0→1 during transit, clamped at 1 during hold
+      const progress = Math.min(frame / TRANSIT_FRAMES, 1);
+
+      // planet positions synchronized with transfer
+      const eAngle = earthDepart + progress * earthSweep;
+      const mAngle = marsDepart + progress * marsSweep;
+
       // Earth
-      const eAngle = t * 0.005;
       const ex = cx + Math.cos(eAngle) * scale;
       const ey = cy + Math.sin(eAngle) * scale;
       ctx.fillStyle = "#3b82f6";
@@ -424,7 +446,6 @@ function OrbitalView({ trajectory, missionResult }) {
       ctx.fillText("Earth", ex + 8, ey + 3);
 
       // Mars
-      const mAngle = t * 0.005 / 1.88 + 0.8;
       const mx = cx + Math.cos(mAngle) * scale * 1.524;
       const my = cy + Math.sin(mAngle) * scale * 1.524;
       ctx.fillStyle = "#ef4444";
@@ -432,7 +453,7 @@ function OrbitalView({ trajectory, missionResult }) {
       ctx.fillStyle = "#fca5a5";
       ctx.fillText("Mars", mx + 7, my + 3);
 
-      // Transfer orbit (fixed arc from Earth orbit to Mars orbit)
+      // Transfer ellipse
       if (trajectory) {
         const rA = scale;
         const rB = scale * 1.524;
@@ -440,63 +461,73 @@ function OrbitalView({ trajectory, missionResult }) {
         const c2 = a - rA;
         const ecc = c2 / a;
 
-        // draw full transfer arc (Earth orbit → Mars orbit)
-        ctx.strokeStyle = "#10b98155";
+        // full dashed arc
+        ctx.strokeStyle = "#10b98144";
         ctx.lineWidth = 1.5;
         ctx.setLineDash([5, 5]);
         ctx.beginPath();
         for (let i = 0; i <= 80; i++) {
           const theta = (i / 80) * Math.PI;
           const r = (a * (1 - ecc * ecc)) / (1 + ecc * Math.cos(theta));
-          const px = cx + Math.cos(departAngle + theta) * r;
-          const py = cy + Math.sin(departAngle + theta) * r;
+          const px = cx + Math.cos(earthDepart + theta) * r;
+          const py = cy + Math.sin(earthDepart + theta) * r;
           if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
         }
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // departure marker on Earth orbit
-        const depX = cx + Math.cos(departAngle) * scale;
-        const depY = cy + Math.sin(departAngle) * scale;
-        ctx.strokeStyle = "#3b82f666";
+        // departure marker
+        const depX = cx + Math.cos(earthDepart) * scale;
+        const depY = cy + Math.sin(earthDepart) * scale;
+        ctx.strokeStyle = "#3b82f644";
         ctx.lineWidth = 1;
         ctx.beginPath(); ctx.arc(depX, depY, 7, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "9px monospace";
+        ctx.fillText("TLI", depX + 10, depY - 6);
 
-        // arrival marker on Mars orbit
-        const arrX = cx + Math.cos(departAngle + Math.PI) * scale * 1.524;
-        const arrY = cy + Math.sin(departAngle + Math.PI) * scale * 1.524;
-        ctx.strokeStyle = "#ef444466";
+        // arrival marker
+        const arrX = cx + Math.cos(arrivalAngle) * scale * 1.524;
+        const arrY = cy + Math.sin(arrivalAngle) * scale * 1.524;
+        ctx.strokeStyle = "#ef444444";
         ctx.lineWidth = 1;
         ctx.beginPath(); ctx.arc(arrX, arrY, 7, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = "#94a3b8";
+        ctx.fillText("MOI", arrX + 10, arrY - 6);
 
-        // spacecraft dot animating along arc
-        const progress = (t % 300) / 300;
-        const theta = progress * Math.PI;
-        const r = (a * (1 - ecc * ecc)) / (1 + ecc * Math.cos(theta));
-        const sx2 = cx + Math.cos(departAngle + theta) * r;
-        const sy2 = cy + Math.sin(departAngle + theta) * r;
+        // spacecraft position on transfer arc
+        const scTheta = progress * Math.PI;
+        const scR = (a * (1 - ecc * ecc)) / (1 + ecc * Math.cos(scTheta));
+        const scX = cx + Math.cos(earthDepart + scTheta) * scR;
+        const scY = cy + Math.sin(earthDepart + scTheta) * scR;
 
-        // trail
-        ctx.strokeStyle = "#10b98133";
-        ctx.lineWidth = 1.5;
+        // solid trail behind spacecraft
+        ctx.strokeStyle = "#10b98166";
+        ctx.lineWidth = 2;
         ctx.beginPath();
-        for (let i = 0; i <= 40; i++) {
-          const tt = (i / 40) * theta;
+        for (let i = 0; i <= 60; i++) {
+          const tt = (i / 60) * scTheta;
           const tr = (a * (1 - ecc * ecc)) / (1 + ecc * Math.cos(tt));
-          const tx = cx + Math.cos(departAngle + tt) * tr;
-          const ty = cy + Math.sin(departAngle + tt) * tr;
+          const tx = cx + Math.cos(earthDepart + tt) * tr;
+          const ty = cy + Math.sin(earthDepart + tt) * tr;
           if (i === 0) ctx.moveTo(tx, ty); else ctx.lineTo(tx, ty);
         }
         ctx.stroke();
 
-        // spacecraft
+        // spacecraft dot
         ctx.fillStyle = "#10b981";
-        ctx.beginPath(); ctx.arc(sx2, sy2, 3.5, 0, Math.PI * 2); ctx.fill();
-        const g2 = ctx.createRadialGradient(sx2, sy2, 0, sx2, sy2, 12);
+        ctx.beginPath(); ctx.arc(scX, scY, 3.5, 0, Math.PI * 2); ctx.fill();
+        const g2 = ctx.createRadialGradient(scX, scY, 0, scX, scY, 12);
         g2.addColorStop(0, "#10b98144");
         g2.addColorStop(1, "#10b98100");
         ctx.fillStyle = g2;
-        ctx.beginPath(); ctx.arc(sx2, sy2, 12, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(scX, scY, 12, 0, Math.PI * 2); ctx.fill();
+
+        // day counter
+        const day = Math.round(progress * transitDays);
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "10px monospace";
+        ctx.fillText(`Day ${day} / ${Math.round(transitDays)}`, scX + 14, scY + 4);
       }
 
       // info overlay
