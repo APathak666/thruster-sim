@@ -337,7 +337,7 @@ function MassBreakdownBar({ massBkdn, total }) {
 }
 
 // ─── THRUSTER CARD ───
-function ThrusterCard({ t, selected, onSelect, compact }) {
+function ThrusterCard({ t, selected, onSelect, compact, feasible }) {
   const col = CAT_COLORS[t.category] || S.accent;
   return (
     <div onClick={onSelect} style={{
@@ -347,7 +347,14 @@ function ThrusterCard({ t, selected, onSelect, compact }) {
       transition: "all 0.15s",
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <span style={{ fontSize: 14, fontWeight: 700, color: S.text }}>{t.name}</span>
+        <span style={{ fontSize: 14, fontWeight: 700, color: S.text }}>
+          {feasible !== undefined && (
+            <span style={{ color: feasible ? S.accent : S.danger, marginRight: 6, fontSize: 12 }}>
+              {feasible ? "✓" : "✗"}
+            </span>
+          )}
+          {t.name}
+        </span>
         <Badge text={t.category} color={col} />
       </div>
       {!compact && <p style={{ fontSize: 11, color: S.textDim, margin: "4px 0 8px" }}>{t.description}</p>}
@@ -384,6 +391,11 @@ function OrbitalView({ trajectory, missionResult, thruster }) {
     const impulsiveCategories = ["Chemical", "NTP"];
     const isImpulsive = trajectory && trajectory.type === "impulsive"
       && thruster && impulsiveCategories.includes(thruster.category);
+    const isSpiral = trajectory && trajectory.id === "low_thrust_spiral"
+      && thruster && !impulsiveCategories.includes(thruster.category);
+    // isContinuousEllipse: continuous trajectory but not spiral (e.g. low_thrust_fast, low_thrust_optimal, or impulsive traj with EP thruster)
+    const isContinuousEllipse = !isImpulsive && !isSpiral;
+
     const transitDays = (missionResult && missionResult.transitDays) || (trajectory && trajectory.transferDays) || 259;
     const earthPeriod = 365.25;
     const marsPeriod = 687;
@@ -391,8 +403,6 @@ function OrbitalView({ trajectory, missionResult, thruster }) {
     const marsSweep = (transitDays / marsPeriod) * 2 * Math.PI;
 
     const earthDepart = 0;
-    const arrivalAngle = earthDepart + Math.PI;
-    const marsDepart = arrivalAngle - marsSweep;
 
     // burn duration as fraction of transit (for visualizing burn arcs)
     const burnFrac = missionResult ? Math.min(missionResult.burnTimeDays / transitDays, 1) : 0;
@@ -401,7 +411,7 @@ function OrbitalView({ trajectory, missionResult, thruster }) {
     const HOLD_FRAMES = 120;
     const TOTAL_FRAMES = TRANSIT_FRAMES + HOLD_FRAMES;
 
-    // helper: position on transfer ellipse at angle theta (0=perihelion/Earth, π=aphelion/Mars)
+    // ── Ellipse helpers (for impulsive + continuous-ellipse modes) ──
     const rA = scale;
     const rB = scale * 1.524;
     const sma = (rA + rB) / 2;
@@ -414,6 +424,26 @@ function OrbitalView({ trajectory, missionResult, thruster }) {
       const r = ellipseR(theta);
       return [cx + Math.cos(earthDepart + theta) * r, cy + Math.sin(earthDepart + theta) * r];
     }
+
+    // ── Spiral helpers (for low-thrust spiral mode) ──
+    // Archimedean spiral from Earth orbit radius to Mars orbit radius
+    const avgOrbitalPeriodDays = (earthPeriod + marsPeriod) / 2;
+    const numTurns = isSpiral ? Math.max(3, Math.round(transitDays / avgOrbitalPeriodDays)) : 0;
+    const totalSpiralAngle = numTurns * 2 * Math.PI + Math.PI; // +π so endpoint is visually opposite start
+    const spiralStartAngle = earthDepart; // start at Earth's departure position
+    function spiralXY(frac) {
+      // frac: 0 = Earth orbit, 1 = Mars orbit
+      const r = rA + (rB - rA) * frac;
+      const angle = spiralStartAngle + frac * totalSpiralAngle;
+      return [cx + Math.cos(angle) * r, cy + Math.sin(angle) * r, angle];
+    }
+    // Mars arrival angle for spiral: where the spiral ends
+    const spiralEndAngle = spiralStartAngle + totalSpiralAngle;
+    const spiralMarsDepart = spiralEndAngle - marsSweep;
+
+    // For non-spiral modes
+    const arrivalAngle = earthDepart + Math.PI;
+    const marsDepart = isSpiral ? spiralMarsDepart : arrivalAngle - marsSweep;
 
     let t = 0;
     function draw() {
@@ -444,7 +474,7 @@ function OrbitalView({ trajectory, missionResult, thruster }) {
       const progress = Math.min(frame / TRANSIT_FRAMES, 1);
 
       const eAngle = earthDepart + progress * earthSweep;
-      const mAngle = marsDepart + progress * marsSweep;
+      const mAngle = (isSpiral ? spiralMarsDepart : marsDepart) + progress * marsSweep;
 
       // Earth
       const ex = cx + Math.cos(eAngle) * scale;
@@ -464,90 +494,42 @@ function OrbitalView({ trajectory, missionResult, thruster }) {
       ctx.fillText("Mars", mx + 7, my + 3);
 
       if (trajectory) {
-        // full dashed transfer arc
-        ctx.strokeStyle = "#10b98133";
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([5, 5]);
-        ctx.beginPath();
-        for (let i = 0; i <= 80; i++) {
-          const [px, py] = ellipseXY((i / 80) * Math.PI);
-          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-        }
-        ctx.stroke();
-        ctx.setLineDash([]);
 
-        if (isImpulsive) {
-          // ═══ IMPULSIVE MODE ═══
-          // departure burn marker (TLI)
-          const [depX, depY] = ellipseXY(0);
-          ctx.strokeStyle = "#f59e0b";
-          ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.arc(depX, depY, 9, 0, Math.PI * 2); ctx.stroke();
-          // burn vector arrow
-          const burnDir = earthDepart + 0.15;
-          ctx.strokeStyle = "#f59e0b";
-          ctx.lineWidth = 2;
+        if (isSpiral) {
+          // ═══ SPIRAL MODE ═══
+          // full dashed spiral path
+          ctx.strokeStyle = "#10b98133";
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([5, 5]);
           ctx.beginPath();
-          ctx.moveTo(depX, depY);
-          ctx.lineTo(depX + Math.cos(burnDir) * 22, depY + Math.sin(burnDir) * 22);
+          const spiralSteps = 200;
+          for (let i = 0; i <= spiralSteps; i++) {
+            const [px, py] = spiralXY(i / spiralSteps);
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          }
           ctx.stroke();
-          // dv label
-          ctx.fillStyle = "#f59e0b";
-          ctx.font = "bold 10px monospace";
-          ctx.fillText(`ΔV₁ ${(trajectory.dv1 / 1000).toFixed(1)} km/s`, depX + 14, depY - 12);
-          ctx.fillStyle = "#94a3b8";
-          ctx.font = "9px monospace";
-          ctx.fillText("TLI burn", depX + 14, depY - 1);
+          ctx.setLineDash([]);
 
-          // arrival burn marker (MOI)
-          const [arrX, arrY] = ellipseXY(Math.PI);
-          ctx.strokeStyle = "#f59e0b";
-          ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.arc(arrX, arrY, 9, 0, Math.PI * 2); ctx.stroke();
-          // burn vector arrow (retrograde at arrival)
-          const arrBurnDir = earthDepart + Math.PI - 0.15;
-          ctx.strokeStyle = "#f59e0b";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(arrX, arrY);
-          ctx.lineTo(arrX - Math.cos(arrBurnDir) * 22, arrY - Math.sin(arrBurnDir) * 22);
-          ctx.stroke();
-          ctx.fillStyle = "#f59e0b";
-          ctx.font = "bold 10px monospace";
-          ctx.fillText(`ΔV₂ ${(trajectory.dv2 / 1000).toFixed(1)} km/s`, arrX + 14, arrY - 12);
-          ctx.fillStyle = "#94a3b8";
-          ctx.font = "9px monospace";
-          ctx.fillText("MOI burn", arrX + 14, arrY - 1);
-
-          // coast label in the middle of the arc
-          const [midX, midY] = ellipseXY(Math.PI / 2);
-          ctx.fillStyle = "#475569";
-          ctx.font = "9px monospace";
-          ctx.fillText("coast phase", midX + 10, midY);
-
-        } else {
-          // ═══ CONTINUOUS THRUST MODE ═══
-          // draw thrust arc (colored segment showing where engines fire)
-          // for continuous thrust, engines burn the whole time
+          // amber burn arc along spiral (up to burnFrac of the path)
           ctx.strokeStyle = "#f59e0b88";
-          ctx.lineWidth = 4;
+          ctx.lineWidth = 3;
           ctx.beginPath();
-          const thrustArcEnd = Math.min(burnFrac, 1) * Math.PI;
-          for (let i = 0; i <= 60; i++) {
-            const theta = (i / 60) * thrustArcEnd;
-            const [px, py] = ellipseXY(theta);
+          const burnSteps = 120;
+          const burnEnd = Math.min(burnFrac, 1);
+          for (let i = 0; i <= burnSteps; i++) {
+            const frac = (i / burnSteps) * burnEnd;
+            const [px, py] = spiralXY(frac);
             if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
           }
           ctx.stroke();
 
-          // thrust indicators (small arrows along the burn arc)
-          const numArrows = 6;
+          // thrust arrows along the burn arc
+          const numArrows = 8;
           for (let i = 0; i < numArrows; i++) {
             const frac = (i + 0.5) / numArrows;
-            if (frac > burnFrac) break;
-            const theta = frac * Math.PI;
-            const [ax, ay] = ellipseXY(theta);
-            const tangent = earthDepart + theta + Math.PI / 2;
+            if (frac > burnEnd) break;
+            const [ax, ay, angle] = spiralXY(frac);
+            const tangent = angle + Math.PI / 2;
             ctx.strokeStyle = "#f59e0b66";
             ctx.lineWidth = 1.5;
             ctx.beginPath();
@@ -557,101 +539,246 @@ function OrbitalView({ trajectory, missionResult, thruster }) {
           }
 
           // labels
-          const [depX, depY] = ellipseXY(0);
+          const [depX, depY] = spiralXY(0);
           ctx.fillStyle = "#f59e0b";
           ctx.font = "bold 10px monospace";
-          ctx.fillText("thrust start", depX + 12, depY - 8);
+          ctx.fillText("spiral start", depX + 12, depY - 8);
 
-          if (burnFrac < 0.95) {
-            // engine cuts off before arrival — mark cutoff
-            const cutTheta = burnFrac * Math.PI;
-            const [cutX, cutY] = ellipseXY(cutTheta);
-            ctx.strokeStyle = "#ef4444";
-            ctx.lineWidth = 1.5;
-            ctx.beginPath(); ctx.arc(cutX, cutY, 6, 0, Math.PI * 2); ctx.stroke();
-            ctx.fillStyle = "#ef4444";
-            ctx.font = "9px monospace";
-            ctx.fillText("cutoff", cutX + 10, cutY - 4);
-            ctx.fillText(`${Math.round(missionResult?.burnTimeDays || 0)}d burn`, cutX + 10, cutY + 8);
-          } else {
-            ctx.fillStyle = "#f59e0b";
-            ctx.font = "9px monospace";
-            const [midX, midY] = ellipseXY(Math.PI / 2);
-            ctx.fillText("continuous burn", midX + 10, midY - 4);
-            ctx.fillText(`${Math.round(missionResult?.burnTimeDays || 0)}d`, midX + 10, midY + 8);
-          }
-
-          const [arrX, arrY] = ellipseXY(Math.PI);
+          const [arrX2, arrY2] = spiralXY(1);
           ctx.fillStyle = "#94a3b8";
           ctx.font = "9px monospace";
-          ctx.fillText("arrival", arrX + 12, arrY - 8);
+          ctx.fillText("arrival", arrX2 + 12, arrY2 - 8);
+
+          // spacecraft position along spiral
+          const [scX, scY, scAngle] = spiralXY(progress);
+
+          // solid trail
+          ctx.strokeStyle = "#10b98166";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          for (let i = 0; i <= 60; i++) {
+            const [tx, ty] = spiralXY((i / 60) * progress);
+            if (i === 0) ctx.moveTo(tx, ty); else ctx.lineTo(tx, ty);
+          }
+          ctx.stroke();
+
+          // spacecraft dot
+          ctx.fillStyle = "#10b981";
+          ctx.beginPath(); ctx.arc(scX, scY, 3.5, 0, Math.PI * 2); ctx.fill();
+          const g2 = ctx.createRadialGradient(scX, scY, 0, scX, scY, 12);
+          g2.addColorStop(0, "#10b98144");
+          g2.addColorStop(1, "#10b98100");
+          ctx.fillStyle = g2;
+          ctx.beginPath(); ctx.arc(scX, scY, 12, 0, Math.PI * 2); ctx.fill();
+
+          // engine flame (while burning)
+          if (progress < burnEnd) {
+            const flameDir = scAngle - Math.PI / 2;
+            const flameG = ctx.createRadialGradient(
+              scX - Math.cos(flameDir) * 4, scY - Math.sin(flameDir) * 4, 0,
+              scX - Math.cos(flameDir) * 4, scY - Math.sin(flameDir) * 4, 8
+            );
+            flameG.addColorStop(0, "#f59e0baa");
+            flameG.addColorStop(0.5, "#ef444466");
+            flameG.addColorStop(1, "#ef444400");
+            ctx.fillStyle = flameG;
+            ctx.beginPath();
+            ctx.arc(scX - Math.cos(flameDir) * 6, scY - Math.sin(flameDir) * 6, 6, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          // day counter
+          const day = Math.round(progress * transitDays);
+          ctx.fillStyle = "#94a3b8";
+          ctx.font = "10px monospace";
+          ctx.fillText(`Day ${day} / ${Math.round(transitDays)}`, scX + 14, scY + 4);
 
           // total ΔV label
           ctx.fillStyle = "#f59e0b";
           ctx.font = "bold 10px monospace";
           ctx.fillText(`ΔV ${(trajectory.dvTotal / 1000).toFixed(1)} km/s`, 16, H - 16);
-        }
 
-        // spacecraft position
-        const scTheta = progress * Math.PI;
-        const [scX, scY] = ellipseXY(scTheta);
-
-        // solid trail
-        ctx.strokeStyle = "#10b98166";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        for (let i = 0; i <= 60; i++) {
-          const [tx, ty] = ellipseXY((i / 60) * scTheta);
-          if (i === 0) ctx.moveTo(tx, ty); else ctx.lineTo(tx, ty);
-        }
-        ctx.stroke();
-
-        // spacecraft dot
-        ctx.fillStyle = "#10b981";
-        ctx.beginPath(); ctx.arc(scX, scY, 3.5, 0, Math.PI * 2); ctx.fill();
-        const g2 = ctx.createRadialGradient(scX, scY, 0, scX, scY, 12);
-        g2.addColorStop(0, "#10b98144");
-        g2.addColorStop(1, "#10b98100");
-        ctx.fillStyle = g2;
-        ctx.beginPath(); ctx.arc(scX, scY, 12, 0, Math.PI * 2); ctx.fill();
-
-        // engine flame for continuous thrust (when still burning)
-        if (!isImpulsive && progress < burnFrac) {
-          const flameDir = earthDepart + scTheta - Math.PI / 2;
-          const flameG = ctx.createRadialGradient(
-            scX - Math.cos(flameDir) * 4, scY - Math.sin(flameDir) * 4, 0,
-            scX - Math.cos(flameDir) * 4, scY - Math.sin(flameDir) * 4, 8
-          );
-          flameG.addColorStop(0, "#f59e0baa");
-          flameG.addColorStop(0.5, "#ef444466");
-          flameG.addColorStop(1, "#ef444400");
-          ctx.fillStyle = flameG;
+        } else {
+          // ═══ ELLIPSE-BASED MODES (impulsive + continuous-ellipse) ═══
+          // full dashed transfer arc
+          ctx.strokeStyle = "#10b98133";
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([5, 5]);
           ctx.beginPath();
-          ctx.arc(scX - Math.cos(flameDir) * 6, scY - Math.sin(flameDir) * 6, 6, 0, Math.PI * 2);
-          ctx.fill();
+          for (let i = 0; i <= 80; i++) {
+            const [px, py] = ellipseXY((i / 80) * Math.PI);
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          }
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          if (isImpulsive) {
+            // ═══ IMPULSIVE MODE ═══
+            // departure burn marker (TLI)
+            const [depX, depY] = ellipseXY(0);
+            ctx.strokeStyle = "#f59e0b";
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(depX, depY, 9, 0, Math.PI * 2); ctx.stroke();
+            const burnDir = earthDepart + 0.15;
+            ctx.strokeStyle = "#f59e0b";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(depX, depY);
+            ctx.lineTo(depX + Math.cos(burnDir) * 22, depY + Math.sin(burnDir) * 22);
+            ctx.stroke();
+            ctx.fillStyle = "#f59e0b";
+            ctx.font = "bold 10px monospace";
+            ctx.fillText(`ΔV₁ ${(trajectory.dv1 / 1000).toFixed(1)} km/s`, depX + 14, depY - 12);
+            ctx.fillStyle = "#94a3b8";
+            ctx.font = "9px monospace";
+            ctx.fillText("TLI burn", depX + 14, depY - 1);
+
+            // arrival burn marker (MOI)
+            const [arrX, arrY] = ellipseXY(Math.PI);
+            ctx.strokeStyle = "#f59e0b";
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(arrX, arrY, 9, 0, Math.PI * 2); ctx.stroke();
+            const arrBurnDir = earthDepart + Math.PI - 0.15;
+            ctx.strokeStyle = "#f59e0b";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(arrX, arrY);
+            ctx.lineTo(arrX - Math.cos(arrBurnDir) * 22, arrY - Math.sin(arrBurnDir) * 22);
+            ctx.stroke();
+            ctx.fillStyle = "#f59e0b";
+            ctx.font = "bold 10px monospace";
+            ctx.fillText(`ΔV₂ ${(trajectory.dv2 / 1000).toFixed(1)} km/s`, arrX + 14, arrY - 12);
+            ctx.fillStyle = "#94a3b8";
+            ctx.font = "9px monospace";
+            ctx.fillText("MOI burn", arrX + 14, arrY - 1);
+
+            const [midX, midY] = ellipseXY(Math.PI / 2);
+            ctx.fillStyle = "#475569";
+            ctx.font = "9px monospace";
+            ctx.fillText("coast phase", midX + 10, midY);
+
+          } else {
+            // ═══ CONTINUOUS THRUST (ELLIPSE) MODE ═══
+            ctx.strokeStyle = "#f59e0b88";
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            const thrustArcEnd = Math.min(burnFrac, 1) * Math.PI;
+            for (let i = 0; i <= 60; i++) {
+              const theta = (i / 60) * thrustArcEnd;
+              const [px, py] = ellipseXY(theta);
+              if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.stroke();
+
+            const numArrows = 6;
+            for (let i = 0; i < numArrows; i++) {
+              const frac = (i + 0.5) / numArrows;
+              if (frac > burnFrac) break;
+              const theta = frac * Math.PI;
+              const [ax, ay] = ellipseXY(theta);
+              const tangent = earthDepart + theta + Math.PI / 2;
+              ctx.strokeStyle = "#f59e0b66";
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              ctx.moveTo(ax, ay);
+              ctx.lineTo(ax + Math.cos(tangent) * 8, ay + Math.sin(tangent) * 8);
+              ctx.stroke();
+            }
+
+            const [depX, depY] = ellipseXY(0);
+            ctx.fillStyle = "#f59e0b";
+            ctx.font = "bold 10px monospace";
+            ctx.fillText("thrust start", depX + 12, depY - 8);
+
+            if (burnFrac < 0.95) {
+              const cutTheta = burnFrac * Math.PI;
+              const [cutX, cutY] = ellipseXY(cutTheta);
+              ctx.strokeStyle = "#ef4444";
+              ctx.lineWidth = 1.5;
+              ctx.beginPath(); ctx.arc(cutX, cutY, 6, 0, Math.PI * 2); ctx.stroke();
+              ctx.fillStyle = "#ef4444";
+              ctx.font = "9px monospace";
+              ctx.fillText("cutoff", cutX + 10, cutY - 4);
+              ctx.fillText(`${Math.round(missionResult?.burnTimeDays || 0)}d burn`, cutX + 10, cutY + 8);
+            } else {
+              ctx.fillStyle = "#f59e0b";
+              ctx.font = "9px monospace";
+              const [midX, midY] = ellipseXY(Math.PI / 2);
+              ctx.fillText("continuous burn", midX + 10, midY - 4);
+              ctx.fillText(`${Math.round(missionResult?.burnTimeDays || 0)}d`, midX + 10, midY + 8);
+            }
+
+            const [arrX, arrY] = ellipseXY(Math.PI);
+            ctx.fillStyle = "#94a3b8";
+            ctx.font = "9px monospace";
+            ctx.fillText("arrival", arrX + 12, arrY - 8);
+
+            ctx.fillStyle = "#f59e0b";
+            ctx.font = "bold 10px monospace";
+            ctx.fillText(`ΔV ${(trajectory.dvTotal / 1000).toFixed(1)} km/s`, 16, H - 16);
+          }
+
+          // spacecraft position on ellipse
+          const scTheta = progress * Math.PI;
+          const [scX, scY] = ellipseXY(scTheta);
+
+          // solid trail
+          ctx.strokeStyle = "#10b98166";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          for (let i = 0; i <= 60; i++) {
+            const [tx, ty] = ellipseXY((i / 60) * scTheta);
+            if (i === 0) ctx.moveTo(tx, ty); else ctx.lineTo(tx, ty);
+          }
+          ctx.stroke();
+
+          // spacecraft dot
+          ctx.fillStyle = "#10b981";
+          ctx.beginPath(); ctx.arc(scX, scY, 3.5, 0, Math.PI * 2); ctx.fill();
+          const g2 = ctx.createRadialGradient(scX, scY, 0, scX, scY, 12);
+          g2.addColorStop(0, "#10b98144");
+          g2.addColorStop(1, "#10b98100");
+          ctx.fillStyle = g2;
+          ctx.beginPath(); ctx.arc(scX, scY, 12, 0, Math.PI * 2); ctx.fill();
+
+          // engine flame for continuous thrust (when still burning)
+          if (!isImpulsive && progress < burnFrac) {
+            const flameDir = earthDepart + scTheta - Math.PI / 2;
+            const flameG = ctx.createRadialGradient(
+              scX - Math.cos(flameDir) * 4, scY - Math.sin(flameDir) * 4, 0,
+              scX - Math.cos(flameDir) * 4, scY - Math.sin(flameDir) * 4, 8
+            );
+            flameG.addColorStop(0, "#f59e0baa");
+            flameG.addColorStop(0.5, "#ef444466");
+            flameG.addColorStop(1, "#ef444400");
+            ctx.fillStyle = flameG;
+            ctx.beginPath();
+            ctx.arc(scX - Math.cos(flameDir) * 6, scY - Math.sin(flameDir) * 6, 6, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          // day counter
+          const day = Math.round(progress * transitDays);
+          ctx.fillStyle = "#94a3b8";
+          ctx.font = "10px monospace";
+          ctx.fillText(`Day ${day} / ${Math.round(transitDays)}`, scX + 14, scY + 4);
         }
 
-        // day counter
-        const day = Math.round(progress * transitDays);
-        ctx.fillStyle = "#94a3b8";
-        ctx.font = "10px monospace";
-        ctx.fillText(`Day ${day} / ${Math.round(transitDays)}`, scX + 14, scY + 4);
-      }
-
-      // info overlay
-      if (trajectory) {
+        // info overlay (3-way label)
+        const modeLabel = isImpulsive ? "Impulsive burns" : isSpiral ? "Low-thrust spiral" : "Continuous thrust";
+        const modeColor = isImpulsive ? "#f59e0b" : isSpiral ? "#8b5cf6" : "#06b6d4";
         const overlayH = isImpulsive ? 96 : 82;
         ctx.fillStyle = "#0a0e17cc";
-        ctx.fillRect(8, 8, 200, overlayH);
+        ctx.fillRect(8, 8, 210, overlayH);
         ctx.strokeStyle = S.border;
         ctx.lineWidth = 1;
-        ctx.strokeRect(8, 8, 200, overlayH);
+        ctx.strokeRect(8, 8, 210, overlayH);
         ctx.fillStyle = "#10b981";
         ctx.font = "bold 11px monospace";
         ctx.fillText(trajectory.name, 16, 26);
-        ctx.fillStyle = isImpulsive ? "#f59e0b" : "#94a3b8";
+        ctx.fillStyle = modeColor;
         ctx.font = "9px monospace";
-        ctx.fillText(isImpulsive ? "▸ Impulsive burns" : "▸ Continuous thrust", 16, 40);
+        ctx.fillText(`▸ ${modeLabel}`, 16, 40);
         ctx.fillStyle = "#94a3b8";
         ctx.font = "10px monospace";
         const y0 = 54;
@@ -676,7 +803,7 @@ function OrbitalView({ trajectory, missionResult, thruster }) {
 
 // ─── MAIN APP ───
 export default function App() {
-  const [tab, setTab] = useState("lab");
+  const [tab, setTab] = useState("mission");
   const [thrusters, setThrusters] = useState(THRUSTER_DB);
 
   // Lab state
@@ -718,6 +845,15 @@ export default function App() {
     return { ...item, thruster: thr, trajectory: traj, result: computeMission(thr, traj, item.payload, item.propellant, item.num) };
   });
 
+  const thrusterFeasibility = useMemo(() => {
+    const map = {};
+    thrusters.forEach(t => {
+      const r = computeMission(t, missionTrajectory, payloadMass, propellantMass, numThrusters);
+      map[t.id] = r.feasible;
+    });
+    return map;
+  }, [thrusters, missionTrajectory, payloadMass, propellantMass, numThrusters]);
+
   function addCustomThruster() {
     const newT = { ...customThruster, id: `custom_${Date.now()}` };
     setThrusters(prev => [...prev, newT]);
@@ -737,8 +873,8 @@ export default function App() {
   }
 
   const tabs = [
-    { id: "lab", label: "Thruster Lab" },
     { id: "mission", label: "Mission Planner" },
+    { id: "lab", label: "Thruster Lab" },
     { id: "compare", label: "Comparator" },
     { id: "orbit", label: "Orbital View" },
   ];
@@ -770,6 +906,21 @@ export default function App() {
 
         {/* ═══ THRUSTER LAB ═══ */}
         {tab === "lab" && (
+          <div>
+            {/* Mission context bar */}
+            <div style={{
+              display: "flex", gap: 24, alignItems: "center", padding: "10px 16px", marginBottom: 16,
+              background: S.surfaceHi, border: `1px solid ${S.border}`, borderRadius: 8,
+              fontSize: 12, color: S.textDim,
+            }}>
+              <span style={{ fontWeight: 700, color: S.accent, textTransform: "uppercase", fontSize: 10, letterSpacing: "0.06em" }}>Active Mission</span>
+              <span>Trajectory: <b style={{ color: S.text }}>{missionTrajectory.name}</b></span>
+              <span>ΔV required: <b style={{ color: S.text }}>{(missionTrajectory.dvTotal / 1000).toFixed(1)} km/s</b></span>
+              <span>Payload: <b style={{ color: S.text }}>{formatNum(payloadMass, 0)} kg</b></span>
+              <span>Propellant: <b style={{ color: S.text }}>{formatNum(propellantMass, 0)} kg</b></span>
+              <span style={{ fontSize: 10, color: S.textMuted }}>✓/✗ = feasibility with current mission params</span>
+            </div>
+
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
             {/* Left: Browse */}
             <div>
@@ -787,7 +938,8 @@ export default function App() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 500, overflowY: "auto" }}>
                   {filteredThrusters.map(t => (
                     <ThrusterCard key={t.id} t={t} selected={selectedThruster === t.id}
-                      onSelect={() => setSelectedThruster(t.id)} compact />
+                      onSelect={() => setSelectedThruster(t.id)} compact
+                      feasible={thrusterFeasibility[t.id]} />
                   ))}
                 </div>
               </Card>
@@ -849,6 +1001,39 @@ export default function App() {
                 <MassBreakdownBar massBkdn={selectedT.massBkdn} total={selectedT.mass} />
               </Card>
 
+              {/* Mission Performance card */}
+              {(() => {
+                const r = computeMission(selectedT, missionTrajectory, payloadMass, propellantMass, numThrusters);
+                return (
+                  <Card title="Mission Performance" style={{ marginTop: 16 }}>
+                    <div style={{
+                      padding: "8px 12px", borderRadius: 6, marginBottom: 12,
+                      background: r.feasible ? S.accentDim + "33" : "#7f1d1d33",
+                      border: `1px solid ${r.feasible ? S.accent + "44" : S.danger + "44"}`,
+                    }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: r.feasible ? S.accent : S.danger }}>
+                        {r.feasible ? "✓ Feasible" : "✗ Insufficient ΔV"}
+                      </span>
+                      <span style={{ fontSize: 11, color: S.textDim, marginLeft: 8 }}>
+                        for {missionTrajectory.name}
+                      </span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <Stat label="ΔV Capability" value={formatNum(r.dvCapability / 1000, 2)} unit="km/s" color={r.feasible ? S.accent : S.danger} small />
+                      <Stat label="ΔV Margin" value={formatNum(r.dvMargin / 1000, 2)} unit="km/s" color={r.dvMargin >= 0 ? S.accent : S.danger} small />
+                      <Stat label="Transit Time" value={r.transitDays ? formatDays(r.transitDays) : "N/A"} small />
+                      <Stat label="Burn Time" value={formatDays(r.burnTimeDays)} small />
+                      <Stat label="Prop Used" value={formatNum(r.propUsed / 1000, 1)} unit="t" small />
+                      <Stat label="Mass Ratio" value={r.massRatio.toFixed(2)} small />
+                    </div>
+                    <button onClick={() => { setMissionThrusterId(selectedT.id); setTab("mission"); }} style={{
+                      marginTop: 12, padding: "8px 16px", background: S.accent, color: "#000", border: "none",
+                      borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer", width: "100%",
+                    }}>Use for Mission →</button>
+                  </Card>
+                );
+              })()}
+
               {/* Isp vs Thrust landscape */}
               <Card title="Propulsion Landscape: Isp vs Thrust" style={{ marginTop: 16 }}>
                 <ResponsiveContainer width="100%" height={280}>
@@ -879,6 +1064,7 @@ export default function App() {
                 </ResponsiveContainer>
               </Card>
             </div>
+          </div>
           </div>
         )}
 
@@ -1170,11 +1356,34 @@ export default function App() {
 
         {/* ═══ ORBITAL VIEW ═══ */}
         {tab === "orbit" && (
+          !missionResult.feasible ? (
+            <Card title="Orbital View Unavailable">
+              <div style={{ textAlign: "center", padding: "48px 24px" }}>
+                <div style={{ fontSize: 48, marginBottom: 16 }}>✗</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: S.danger, marginBottom: 8 }}>Mission Not Feasible</div>
+                <p style={{ fontSize: 13, color: S.textDim, marginBottom: 24, maxWidth: 420, margin: "0 auto 24px" }}>
+                  <b>{missionThruster.name}</b> on <b>{missionTrajectory.name}</b> does not have enough ΔV
+                  ({formatNum(missionResult.dvCapability / 1000, 1)} km/s capability vs {formatNum(missionResult.dvRequired / 1000, 1)} km/s required).
+                  Adjust your mission parameters to view the orbital transfer.
+                </p>
+                <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+                  <button onClick={() => setTab("mission")} style={{
+                    padding: "10px 20px", background: S.accent, color: "#000", border: "none",
+                    borderRadius: 6, fontWeight: 700, fontSize: 13, cursor: "pointer",
+                  }}>Go to Mission Planner</button>
+                  <button onClick={() => setTab("lab")} style={{
+                    padding: "10px 20px", background: "transparent", color: S.accent, border: `1px solid ${S.accent}`,
+                    borderRadius: 6, fontWeight: 700, fontSize: 13, cursor: "pointer",
+                  }}>Browse Thruster Lab</button>
+                </div>
+              </div>
+            </Card>
+          ) : (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 16 }}>
             <Card title="Earth–Mars Transfer Visualization">
               <OrbitalView trajectory={missionTrajectory} missionResult={missionResult} thruster={missionThruster} />
               <p style={{ fontSize: 11, color: S.textDim, marginTop: 8 }}>
-                Animated Hohmann-like transfer orbit. Green dot = spacecraft. Orbit sizes to scale (1 AU : 1.524 AU).
+                Animated transfer orbit. Green dot = spacecraft. Orbit sizes to scale (1 AU : 1.524 AU).
                 Configured in Mission Planner: <b style={{ color: S.accent }}>{missionThruster.name}</b> on <b>{missionTrajectory.name}</b>.
               </p>
             </Card>
@@ -1226,6 +1435,7 @@ export default function App() {
               </Card>
             </div>
           </div>
+          )
         )}
       </div>
     </div>
