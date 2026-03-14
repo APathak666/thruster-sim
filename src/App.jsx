@@ -170,10 +170,14 @@ function computeMission(thruster, trajectory, payloadMass, propellantMass, numTh
     }
   }
 
-  const feasible = dvCapability >= dvRequired;
+  const dvSufficient = dvCapability >= dvRequired;
+  const meetsTransit = !trajectory.targetTransitDays
+    || (transitDays !== null && transitDays <= trajectory.targetTransitDays);
+  const feasible = dvSufficient && meetsTransit;
 
   return {
-    feasible, dvCapability, dvRequired, dvMargin,
+    feasible, dvSufficient, meetsTransit,
+    dvCapability, dvRequired, dvMargin,
     massRatio, m0, mf: dryMass, dryMass, thrusterDryMass,
     propUsed: Math.min(propUsed, propellantMass), propRemaining: Math.max(propRemaining, 0),
     burnTimeDays, transitDays,
@@ -868,7 +872,7 @@ export default function App() {
         const dv2 = dvTotal - dv1;
         return {
           id: "custom", name: `Custom (${customTrajDays}d)`, type: "impulsive",
-          dv1, dv2, dvTotal, transferDays: customTrajDays,
+          dv1, dv2, dvTotal, transferDays: customTrajDays, targetTransitDays: customTrajDays,
           description: `Custom ${customTrajDays}-day conjunction-class transfer. ΔV estimated from Lambert-problem interpolation.`,
         };
       })()
@@ -1147,19 +1151,33 @@ export default function App() {
             {/* Results */}
             <div>
               {/* Feasibility banner */}
+              {(() => {
+                const bannerColor = missionResult.feasible ? S.accent
+                  : missionResult.dvSufficient ? S.warn : S.danger;
+                const bannerBg = missionResult.feasible ? S.accentDim + "33"
+                  : missionResult.dvSufficient ? "#78350f33" : "#7f1d1d33";
+                const bannerMsg = missionResult.feasible ? "✓ MISSION FEASIBLE"
+                  : missionResult.dvSufficient ? "⚠ ΔV OK — TRANSIT TOO SLOW"
+                  : "✗ INSUFFICIENT ΔV";
+                return (
               <div style={{
                 padding: "12px 20px", borderRadius: 8, marginBottom: 16,
-                background: missionResult.feasible ? S.accentDim + "33" : "#7f1d1d33",
-                border: `1px solid ${missionResult.feasible ? S.accent + "66" : S.danger + "66"}`,
+                background: bannerBg,
+                border: `1px solid ${bannerColor}66`,
                 display: "flex", justifyContent: "space-between", alignItems: "center",
               }}>
                 <div>
-                  <span style={{ fontSize: 16, fontWeight: 800, color: missionResult.feasible ? S.accent : S.danger }}>
-                    {missionResult.feasible ? "✓ MISSION FEASIBLE" : "✗ INSUFFICIENT ΔV"}
+                  <span style={{ fontSize: 16, fontWeight: 800, color: bannerColor }}>
+                    {bannerMsg}
                   </span>
                   <span style={{ fontSize: 12, color: S.textDim, marginLeft: 12 }}>
                     {missionThruster.name} + {missionTrajectory.name}
                   </span>
+                  {missionResult.dvSufficient && !missionResult.meetsTransit && missionTrajectory.targetTransitDays && (
+                    <div style={{ fontSize: 11, color: S.warn, marginTop: 4 }}>
+                      Target: {missionTrajectory.targetTransitDays}d | Actual: {formatDays(missionResult.transitDays)} — thrust too low for this mass
+                    </div>
+                  )}
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontSize: 22, fontWeight: 800, color: S.text }}>
@@ -1168,6 +1186,8 @@ export default function App() {
                   <div style={{ fontSize: 10, color: S.textDim }}>TRANSIT TIME</div>
                 </div>
               </div>
+                );
+              })()}
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
                 <Card title="ΔV Budget">
