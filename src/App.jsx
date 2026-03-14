@@ -366,7 +366,6 @@ function ThrusterCard({ t, selected, onSelect, compact }) {
 function OrbitalView({ trajectory, missionResult }) {
   const canvasRef = useRef(null);
   const animRef = useRef(null);
-  const [angle, setAngle] = useState(0);
 
   useEffect(() => {
     const c = canvasRef.current;
@@ -374,28 +373,36 @@ function OrbitalView({ trajectory, missionResult }) {
     const ctx = c.getContext("2d");
     const W = c.width, H = c.height;
     const cx = W / 2, cy = H / 2;
-    const scale = Math.min(W, H) / 4.2;
+    const scale = Math.min(W, H) / 3.6;
+
+    // precompute static star positions
+    const stars = Array.from({ length: 80 }, (_, i) => ({
+      x: (Math.sin(i * 137.5) * 0.5 + 0.5) * W,
+      y: (Math.cos(i * 97.3) * 0.5 + 0.5) * H,
+      b: 0.15 + (i % 5) * 0.06,
+    }));
 
     let t = 0;
+    // fixed departure angle — arc stays put, planets orbit through it
+    const departAngle = -Math.PI / 4;
+
     function draw() {
       ctx.fillStyle = "#0a0e17";
       ctx.fillRect(0, 0, W, H);
 
-      // stars
-      for (let i = 0; i < 60; i++) {
-        const sx = (Math.sin(i * 137.5) * 0.5 + 0.5) * W;
-        const sy = (Math.cos(i * 97.3) * 0.5 + 0.5) * H;
-        ctx.fillStyle = `rgba(255,255,255,${0.1 + Math.random() * 0.3})`;
-        ctx.fillRect(sx, sy, 1, 1);
+      // stars (fixed brightness, no flicker)
+      for (const s of stars) {
+        ctx.fillStyle = `rgba(255,255,255,${s.b})`;
+        ctx.fillRect(s.x, s.y, 1, 1);
       }
 
       // Sun
-      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 14);
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 16);
       grad.addColorStop(0, "#fde68a");
       grad.addColorStop(0.5, "#f59e0b");
       grad.addColorStop(1, "#f59e0b00");
       ctx.fillStyle = grad;
-      ctx.beginPath(); ctx.arc(cx, cy, 14, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx, cy, 16, 0, Math.PI * 2); ctx.fill();
 
       // Earth orbit
       ctx.strokeStyle = "#3b82f622";
@@ -425,50 +432,80 @@ function OrbitalView({ trajectory, missionResult }) {
       ctx.fillStyle = "#fca5a5";
       ctx.fillText("Mars", mx + 7, my + 3);
 
-      // Transfer orbit
+      // Transfer orbit (fixed arc from Earth orbit to Mars orbit)
       if (trajectory) {
         const rA = scale;
         const rB = scale * 1.524;
         const a = (rA + rB) / 2;
         const c2 = a - rA;
-        const b = Math.sqrt(a * a - c2 * c2);
+        const ecc = c2 / a;
 
-        ctx.strokeStyle = "#10b98166";
-        ctx.lineWidth = 2;
-        ctx.setLineDash([4, 4]);
+        // draw full transfer arc (Earth orbit → Mars orbit)
+        ctx.strokeStyle = "#10b98155";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 5]);
         ctx.beginPath();
-        const startAngle = eAngle;
-        for (let i = 0; i <= 60; i++) {
-          const theta = (i / 60) * Math.PI;
-          const r = (a * (1 - (c2 / a) * (c2 / a))) / (1 + (c2 / a) * Math.cos(theta));
-          const px = cx + Math.cos(startAngle + theta) * r;
-          const py = cy + Math.sin(startAngle + theta) * r;
+        for (let i = 0; i <= 80; i++) {
+          const theta = (i / 80) * Math.PI;
+          const r = (a * (1 - ecc * ecc)) / (1 + ecc * Math.cos(theta));
+          const px = cx + Math.cos(departAngle + theta) * r;
+          const py = cy + Math.sin(departAngle + theta) * r;
           if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
         }
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // spacecraft dot
-        const progress = (t % 200) / 200;
-        const theta = progress * Math.PI;
-        const r = (a * (1 - (c2 / a) * (c2 / a))) / (1 + (c2 / a) * Math.cos(theta));
-        const sx2 = cx + Math.cos(startAngle + theta) * r;
-        const sy2 = cy + Math.sin(startAngle + theta) * r;
-        ctx.fillStyle = "#10b981";
-        ctx.beginPath(); ctx.arc(sx2, sy2, 3, 0, Math.PI * 2); ctx.fill();
+        // departure marker on Earth orbit
+        const depX = cx + Math.cos(departAngle) * scale;
+        const depY = cy + Math.sin(departAngle) * scale;
+        ctx.strokeStyle = "#3b82f666";
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(depX, depY, 7, 0, Math.PI * 2); ctx.stroke();
 
-        // glow
-        const g2 = ctx.createRadialGradient(sx2, sy2, 0, sx2, sy2, 10);
+        // arrival marker on Mars orbit
+        const arrX = cx + Math.cos(departAngle + Math.PI) * scale * 1.524;
+        const arrY = cy + Math.sin(departAngle + Math.PI) * scale * 1.524;
+        ctx.strokeStyle = "#ef444466";
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(arrX, arrY, 7, 0, Math.PI * 2); ctx.stroke();
+
+        // spacecraft dot animating along arc
+        const progress = (t % 300) / 300;
+        const theta = progress * Math.PI;
+        const r = (a * (1 - ecc * ecc)) / (1 + ecc * Math.cos(theta));
+        const sx2 = cx + Math.cos(departAngle + theta) * r;
+        const sy2 = cy + Math.sin(departAngle + theta) * r;
+
+        // trail
+        ctx.strokeStyle = "#10b98133";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let i = 0; i <= 40; i++) {
+          const tt = (i / 40) * theta;
+          const tr = (a * (1 - ecc * ecc)) / (1 + ecc * Math.cos(tt));
+          const tx = cx + Math.cos(departAngle + tt) * tr;
+          const ty = cy + Math.sin(departAngle + tt) * tr;
+          if (i === 0) ctx.moveTo(tx, ty); else ctx.lineTo(tx, ty);
+        }
+        ctx.stroke();
+
+        // spacecraft
+        ctx.fillStyle = "#10b981";
+        ctx.beginPath(); ctx.arc(sx2, sy2, 3.5, 0, Math.PI * 2); ctx.fill();
+        const g2 = ctx.createRadialGradient(sx2, sy2, 0, sx2, sy2, 12);
         g2.addColorStop(0, "#10b98144");
         g2.addColorStop(1, "#10b98100");
         ctx.fillStyle = g2;
-        ctx.beginPath(); ctx.arc(sx2, sy2, 10, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(sx2, sy2, 12, 0, Math.PI * 2); ctx.fill();
       }
 
       // info overlay
       if (trajectory) {
-        ctx.fillStyle = "#1118274a";
-        ctx.fillRect(8, 8, 180, 80);
+        ctx.fillStyle = "#0a0e17cc";
+        ctx.fillRect(8, 8, 190, 82);
+        ctx.strokeStyle = S.border;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(8, 8, 190, 82);
         ctx.fillStyle = "#10b981";
         ctx.font = "bold 11px monospace";
         ctx.fillText(trajectory.name, 16, 26);
@@ -490,7 +527,7 @@ function OrbitalView({ trajectory, missionResult }) {
     return () => cancelAnimationFrame(animRef.current);
   }, [trajectory, missionResult]);
 
-  return <canvas ref={canvasRef} width={600} height={400} style={{ width: "100%", height: 400, borderRadius: 8, border: `1px solid ${S.border}` }} />;
+  return <canvas ref={canvasRef} width={600} height={600} style={{ width: "100%", height: "auto", aspectRatio: "1", borderRadius: 8, border: `1px solid ${S.border}` }} />;
 }
 
 // ─── MAIN APP ───
@@ -913,7 +950,7 @@ export default function App() {
             {/* Visual comparisons */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
               <Card title="Transit Time Comparison">
-                <ResponsiveContainer width="100%" height={250}>
+                <ResponsiveContainer width="100%" height={180}>
                   <BarChart data={compareResults.map(cr => ({
                     name: cr.thruster.name.substring(0, 12),
                     transit: cr.result.transitDays || 0,
@@ -933,7 +970,7 @@ export default function App() {
               </Card>
 
               <Card title="ΔV Budget Comparison">
-                <ResponsiveContainer width="100%" height={250}>
+                <ResponsiveContainer width="100%" height={180}>
                   <BarChart data={compareResults.map(cr => ({
                     name: cr.thruster.name.substring(0, 12),
                     capability: cr.result.dvCapability / 1000,
@@ -952,7 +989,7 @@ export default function App() {
               </Card>
 
               <Card title="Mass Ratio Comparison">
-                <ResponsiveContainer width="100%" height={250}>
+                <ResponsiveContainer width="100%" height={180}>
                   <BarChart data={compareResults.map(cr => ({
                     name: cr.thruster.name.substring(0, 12),
                     massRatio: cr.result.massRatio,
@@ -969,7 +1006,7 @@ export default function App() {
               </Card>
 
               <Card title="Specific Power (α) Comparison">
-                <ResponsiveContainer width="100%" height={250}>
+                <ResponsiveContainer width="100%" height={180}>
                   <BarChart data={compareResults.map(cr => ({
                     name: cr.thruster.name.substring(0, 12),
                     alpha: cr.result.alpha,
