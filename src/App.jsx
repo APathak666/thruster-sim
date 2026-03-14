@@ -151,8 +151,13 @@ function computeMission(thruster, trajectory, payloadMass, propellantMass, numTh
   const jetPower = 0.5 * F * ve;
   const alpha = thruster.mass > 0 ? jetPower / (thruster.mass * numThrusters) : 0;
 
+  // Chemical & NTP do near-instantaneous burns → transit = coast time (fixed by trajectory)
+  // Everything else (EP, Fusion, etc.) → transit computed from thrust & mass (continuous burn)
+  const impulsiveCats = ["Chemical", "NTP"];
+  const canDoImpulsive = impulsiveCats.includes(thruster.category);
+
   let transitDays;
-  if (trajectory.type === "impulsive") {
+  if (trajectory.type === "impulsive" && canDoImpulsive) {
     transitDays = dvCapability >= dvRequired ? trajectory.transferDays : null;
   } else {
     if (dvCapability >= dvRequired && F > 0) {
