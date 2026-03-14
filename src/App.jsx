@@ -192,6 +192,25 @@ function formatDays(d) {
   return `${Math.round(d)}d`;
 }
 
+// Estimate total impulsive ΔV for Earth-Mars transfer at a given transit time
+// Interpolates from known conjunction-class data points (Lambert-problem solutions)
+function estimateDv(transitDays) {
+  const pts = [[90, 18000], [120, 12000], [180, 7000], [259, 5700]];
+  if (transitDays >= 259) return 5700; // Can't beat Hohmann
+  if (transitDays <= 60) return pts[0][1] * Math.pow(pts[0][0] / transitDays, 1.8);
+  if (transitDays <= pts[0][0]) {
+    const ratio = pts[0][0] / transitDays;
+    return pts[0][1] * Math.pow(ratio, 1.8);
+  }
+  for (let i = 0; i < pts.length - 1; i++) {
+    if (transitDays >= pts[i][0] && transitDays <= pts[i + 1][0]) {
+      const f = (transitDays - pts[i][0]) / (pts[i + 1][0] - pts[i][0]);
+      return pts[i][1] + f * (pts[i + 1][1] - pts[i][1]);
+    }
+  }
+  return 5700;
+}
+
 // ─── STYLES ───
 const FONT = "'JetBrains Mono', 'Fira Code', 'SF Mono', monospace";
 const DISPLAY = "'Space Grotesk', 'DM Sans', sans-serif";
@@ -818,6 +837,7 @@ export default function App() {
   // Mission state
   const [missionThrusterId, setMissionThrusterId] = useState("dfd_1mw");
   const [missionTrajId, setMissionTrajId] = useState("hohmann");
+  const [customTrajDays, setCustomTrajDays] = useState(150);
   const [payloadMass, setPayloadMass] = useState(50000);
   const [propellantMass, setPropellantMass] = useState(20000);
   const [numThrusters, setNumThrusters] = useState(1);
@@ -836,7 +856,18 @@ export default function App() {
 
   const selectedT = thrusters.find(t => t.id === selectedThruster) || thrusters[0];
   const missionThruster = thrusters.find(t => t.id === missionThrusterId) || thrusters[0];
-  const missionTrajectory = TRAJECTORY_DB.find(t => t.id === missionTrajId) || TRAJECTORY_DB[0];
+  const missionTrajectory = missionTrajId === "custom"
+    ? (() => {
+        const dvTotal = Math.round(estimateDv(customTrajDays));
+        const dv1 = Math.round(dvTotal * 0.58);
+        const dv2 = dvTotal - dv1;
+        return {
+          id: "custom", name: `Custom (${customTrajDays}d)`, type: "impulsive",
+          dv1, dv2, dvTotal, transferDays: customTrajDays,
+          description: `Custom ${customTrajDays}-day conjunction-class transfer. ΔV estimated from Lambert-problem interpolation.`,
+        };
+      })()
+    : TRAJECTORY_DB.find(t => t.id === missionTrajId) || TRAJECTORY_DB[0];
   const missionResult = computeMission(missionThruster, missionTrajectory, payloadMass, propellantMass, numThrusters);
 
   const compareResults = compareItems.map(item => {
@@ -1077,7 +1108,13 @@ export default function App() {
                 <Select label="Thruster" value={missionThrusterId} onChange={setMissionThrusterId}
                   options={thrusters.map(t => ({ value: t.id, label: `${t.name} (${t.category})` }))} />
                 <Select label="Trajectory" value={missionTrajId} onChange={setMissionTrajId}
-                  options={TRAJECTORY_DB.map(t => ({ value: t.id, label: `${t.name} — ΔV ${(t.dvTotal/1000).toFixed(1)} km/s` }))} />
+                  options={[
+                    ...TRAJECTORY_DB.map(t => ({ value: t.id, label: `${t.name} — ΔV ${(t.dvTotal/1000).toFixed(1)} km/s` })),
+                    { value: "custom", label: "Custom Trajectory — specify transit time" },
+                  ]} />
+                {missionTrajId === "custom" && (
+                  <Input label="Desired Transit Time" value={customTrajDays} onChange={setCustomTrajDays} unit="days" min={30} max={600} step={5} />
+                )}
                 <Input label="Payload Mass" value={payloadMass} onChange={setPayloadMass} unit="kg" min={100} step={1000} />
                 <Input label="Propellant Mass" value={propellantMass} onChange={setPropellantMass} unit="kg" min={100} step={1000} />
                 <Input label="Number of Thrusters" value={numThrusters} onChange={setNumThrusters} unit="×" min={1} max={100} />
@@ -1175,28 +1212,99 @@ export default function App() {
                 </Card>
               </div>
 
-              {/* Propellant sensitivity chart */}
-              <Card title="Sensitivity: Transit Time vs Propellant Mass">
+              {/* Burn Profile: propellant remaining vs mission day */}
+              <Card title="Burn Profile: Propellant Remaining vs Time">
                 <ResponsiveContainer width="100%" height={250}>
                   <LineChart data={(() => {
                     const pts = [];
-                    for (let p = 1000; p <= propellantMass * 3; p += Math.max(500, propellantMass * 3 / 50)) {
-                      const r = computeMission(missionThruster, missionTrajectory, payloadMass, p, numThrusters);
-                      if (r.feasible && r.transitDays && r.transitDays < 2000) {
-                        pts.push({ prop: p / 1000, transit: r.transitDays, dv: r.dvCapability / 1000 });
-                      }
+                    const tDays = missionResult.transitDays || missionResult.burnTimeDays || 100;
+                    const bDays = missionResult.burnTimeDays || 0;
+                    const pUsed = missionResult.propUsed || 0;
+                    const steps = 60;
+                    for (let i = 0; i <= steps; i++) {
+                      const day = (i / steps) * tDays;
+                      const propRemain = day <= bDays && bDays > 0
+                        ? propellantMass - (pUsed * day / bDays)
+                        : propellantMass - pUsed;
+                      pts.push({ day: Math.round(day), propellant: +(propRemain / 1000).toFixed(2) });
                     }
                     return pts;
                   })()}>
                     <CartesianGrid strokeDasharray="3 3" stroke={S.border} />
-                    <XAxis dataKey="prop" tick={{ fill: S.textDim, fontSize: 10 }}
-                      label={{ value: "Propellant (tonnes)", position: "bottom", fill: S.textDim, fontSize: 10 }} />
+                    <XAxis dataKey="day" tick={{ fill: S.textDim, fontSize: 10 }}
+                      label={{ value: "Mission Day", position: "bottom", fill: S.textDim, fontSize: 10 }} />
                     <YAxis tick={{ fill: S.textDim, fontSize: 10 }}
-                      label={{ value: "Transit (days)", angle: -90, position: "left", fill: S.textDim, fontSize: 10 }} />
-                    <Tooltip contentStyle={{ background: S.surfaceHi, border: `1px solid ${S.border}`, fontSize: 11, borderRadius: 4 }} />
-                    <Line type="monotone" dataKey="transit" stroke={S.accent} strokeWidth={2} dot={false} />
+                      label={{ value: "Propellant (tonnes)", angle: -90, position: "left", fill: S.textDim, fontSize: 10 }} />
+                    <Tooltip contentStyle={{ background: S.surfaceHi, border: `1px solid ${S.border}`, fontSize: 11, borderRadius: 4 }}
+                      formatter={(v) => [`${v} t`, "Propellant"]} labelFormatter={(d) => `Day ${d}`} />
+                    <Line type="monotone" dataKey="propellant" stroke={S.accent} strokeWidth={2} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
+                <div style={{ fontSize: 10, color: S.textDim, marginTop: 4 }}>
+                  Burn phase: {formatDays(missionResult.burnTimeDays)} | Coast: {missionResult.transitDays && missionResult.burnTimeDays ? formatDays(missionResult.transitDays - missionResult.burnTimeDays) : "—"}
+                </div>
+              </Card>
+
+              {/* Mission Closure: which thrusters can fly this trajectory? */}
+              <Card title="Mission Closure Check" style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 11, color: S.textDim, marginBottom: 12 }}>
+                  Which thrusters can close <b style={{ color: S.text }}>{missionTrajectory.name}</b> with {formatNum(payloadMass / 1000, 0)}t payload + {formatNum(propellantMass / 1000, 0)}t propellant?
+                </div>
+                {(() => {
+                  const cats = Object.keys(CAT_COLORS);
+                  const results = cats.map(cat => {
+                    const catThrusters = thrusters.filter(t => t.category === cat);
+                    const checked = catThrusters.map(t => {
+                      const r = computeMission(t, missionTrajectory, payloadMass, propellantMass, numThrusters);
+                      return { thruster: t, result: r };
+                    });
+                    const feasibleOnes = checked.filter(c => c.result.feasible);
+                    const best = feasibleOnes.length > 0
+                      ? feasibleOnes.reduce((a, b) => (a.result.transitDays || Infinity) < (b.result.transitDays || Infinity) ? a : b)
+                      : null;
+                    return { cat, total: catThrusters.length, feasible: feasibleOnes.length, best };
+                  });
+                  const totalFeasible = results.reduce((s, r) => s + r.feasible, 0);
+                  const totalThrusters = results.reduce((s, r) => s + r.total, 0);
+                  return (
+                    <>
+                      <div style={{
+                        display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8, marginBottom: 12,
+                      }}>
+                        {results.map(r => (
+                          <div key={r.cat} style={{
+                            padding: "8px 10px", borderRadius: 6,
+                            background: r.feasible > 0 ? (CAT_COLORS[r.cat] || S.accent) + "11" : S.surfaceHi,
+                            border: `1px solid ${r.feasible > 0 ? (CAT_COLORS[r.cat] || S.accent) + "44" : S.border}`,
+                          }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: CAT_COLORS[r.cat] || S.text, marginBottom: 2 }}>{r.cat}</div>
+                            <div style={{ fontSize: 10, color: r.feasible > 0 ? S.accent : S.textDim }}>
+                              {r.feasible}/{r.total} feasible
+                            </div>
+                            {r.best && (
+                              <div style={{ fontSize: 10, color: S.textDim, marginTop: 2 }}>
+                                Best: {r.best.thruster.name} — {r.best.result.transitDays ? formatDays(r.best.result.transitDays) : "N/A"}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      {totalFeasible === 0 && (
+                        <div style={{
+                          padding: "10px 14px", borderRadius: 6, background: "#7f1d1d33",
+                          border: `1px solid ${S.danger}44`, fontSize: 12, color: S.danger, fontWeight: 600,
+                        }}>
+                          No thruster in the database can close this trajectory with the current mass budget. Try increasing propellant, reducing payload, or choosing a less aggressive trajectory.
+                        </div>
+                      )}
+                      {totalFeasible > 0 && (
+                        <div style={{ fontSize: 11, color: S.textDim }}>
+                          {totalFeasible}/{totalThrusters} thrusters across {results.filter(r => r.feasible > 0).length}/{results.length} categories can close this mission.
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </Card>
             </div>
           </div>
