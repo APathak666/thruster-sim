@@ -1236,7 +1236,7 @@ export default function App() {
                   Which thrusters can close <b style={{ color: S.text }}>{missionTrajectory.name}</b> with {formatNum(payloadMass / 1000, 0)}t payload + {formatNum(propellantMass / 1000, 0)}t propellant?
                 </div>
                 {(() => {
-                  const cats = Object.keys(CAT_COLORS);
+                  const cats = [...new Set(thrusters.map(t => t.category))];
                   const results = cats.map(cat => {
                     const catThrusters = thrusters.filter(t => t.category === cat);
                     const checked = catThrusters.map(t => {
