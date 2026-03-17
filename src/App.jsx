@@ -18,76 +18,13 @@ const rParkMars = 3690e3;   // 300 km Mars orbit
 // ESTIMATED = derived/interpolated from published papers, not exact flight data
 // PROJECTED = paper study, no hardware at this performance level
 const THRUSTER_DB = [
-  // Chemical — VERIFIED
-  { id: "raptor3_sl", name: "Raptor 3 (Sea Level)", category: "Chemical", isp: 350, thrust: 2747000, power: 0, mass: 1525,
-    massBkdn: { engine: 1525, tanks: 0, radiators: 0, powerSource: 0, pmad: 0, structure: 0 },
-    description: "VERIFIED: SpaceX official (Aug 2024): 280tf, 350s vac Isp for SL variant, 1525 kg engine mass. LOX/CH4. Full-flow staged combustion.", trl: 7 },
-  { id: "raptor2_vac", name: "Raptor 2 Vacuum", category: "Chemical", isp: 363, thrust: 2530000, power: 0, mass: 1670,
-    massBkdn: { engine: 1670, tanks: 0, radiators: 0, powerSource: 0, pmad: 0, structure: 0 },
-    description: "VERIFIED: SpaceX (Apr 2024): RVac2 258tf, ~363s Isp. Mass ~1670 kg (est from R2 SL 1630 kg + nozzle). Currently flying on Starship.", trl: 8 },
-  { id: "raptor_vac_future", name: "Raptor 3/4 Vacuum (Proj)", category: "Chemical", isp: 380, thrust: 3000000, power: 0, mass: 1600,
-    massBkdn: { engine: 1600, tanks: 0, radiators: 0, powerSource: 0, pmad: 0, structure: 0 },
-    description: "PROJECTED: Musk target for R3/R4 RVac 'giant nozzle' — 380s Isp. Not yet built. Mass estimated.", trl: 3 },
-  { id: "rl10b2", name: "RL-10B-2", category: "Chemical", isp: 465, thrust: 110000, power: 0, mass: 277,
-    massBkdn: { engine: 277, tanks: 0, radiators: 0, powerSource: 0, pmad: 0, structure: 0 },
-    description: "VERIFIED: L3Harris/NASA — 24,750 lbf (110 kN), 465.5s Isp. Extensible carbon-carbon nozzle. Flew on ICPS/Artemis I. LOX/LH2.", trl: 9 },
-  { id: "ssme", name: "RS-25D (SSME)", category: "Chemical", isp: 452, thrust: 2279000, power: 0, mass: 3177,
-    massBkdn: { engine: 3177, tanks: 0, radiators: 0, powerSource: 0, pmad: 0, structure: 0 },
-    description: "VERIFIED: L3Harris spec sheet — 512,300 lbf vac at 109%, 452.3s Isp, ~3,177 kg dry. LOX/LH2 staged combustion. SLS core stage.", trl: 9 },
-  { id: "merlin_vac", name: "Merlin 1D Vacuum", category: "Chemical", isp: 348, thrust: 981000, power: 0, mass: 550,
-    massBkdn: { engine: 550, tanks: 0, radiators: 0, powerSource: 0, pmad: 0, structure: 0 },
-    description: "VERIFIED: Wikipedia/SpaceX — 220,500 lbf (981 kN), 348s Isp, ~550 kg (incl nozzle ext). LOX/RP-1 gas-generator. Falcon 9 S2.", trl: 9 },
-
-  // Nuclear Thermal — VERIFIED (historical) / PROJECTED (DRACO)
-  { id: "nerva", name: "NERVA XE-Prime", category: "NTP", isp: 841, thrust: 334000, power: 0, mass: 10200,
-    massBkdn: { engine: 3400, tanks: 0, radiators: 500, powerSource: 5500, pmad: 300, structure: 500 },
-    description: "VERIFIED: Historic ground test (1969) — 75,000 lbf, 841s Isp. LH2 propellant. System mass ~10.2t incl shielding. Program cancelled 1973.", trl: 5 },
-  { id: "draco_ntp", name: "DRACO NTP (Concept)", category: "NTP", isp: 900, thrust: 111200, power: 0, mass: 6000,
-    massBkdn: { engine: 1500, tanks: 0, radiators: 400, powerSource: 3200, pmad: 400, structure: 500 },
-    description: "PROJECTED: NASA/DARPA demonstration concept — target 25,000 lbf, ≥900s Isp. LEU fuel. Mass est. Flight demo was targeted ~2027.", trl: 3 },
-
-  // Hall Effect — VERIFIED (SPT-140) / ESTIMATED (X3, BHT-600)
-  { id: "spt140", name: "SPT-140", category: "Hall EP", isp: 1820, thrust: 0.281, power: 4500, mass: 8.5,
-    massBkdn: { engine: 3.5, tanks: 0, radiators: 0, powerSource: 0, pmad: 2, structure: 3 },
-    description: "VERIFIED: NASA/Fakel AIAA papers — 281 mN at 300V/15A (4.5 kW), 1820s Isp, 55% eff. Flew on Psyche (2023). Thruster+cathode ~5 kg, system ~8.5 kg.", trl: 9 },
-  { id: "x3_hall", name: "X3 Nested Hall", category: "Hall EP", isp: 2340, thrust: 5.4, power: 100000, mass: 230,
-    massBkdn: { engine: 50, tanks: 0, radiators: 20, powerSource: 0, pmad: 100, structure: 60 },
-    description: "ESTIMATED: UM/NASA — demonstrated ~5.4 N at 100 kW, ~2340s Isp. Highest power Hall tested. System mass est. PPU mass dominates.", trl: 4 },
-  { id: "bht600", name: "BHT-600", category: "Hall EP", isp: 1500, thrust: 0.039, power: 600, mass: 3.5,
-    massBkdn: { engine: 1.5, tanks: 0, radiators: 0, powerSource: 0, pmad: 1, structure: 1 },
-    description: "ESTIMATED: Busek — 600W class, ~39 mN, ~1500s Isp. Small-sat Hall thruster. Mass approximate.", trl: 7 },
-
-  // Ion (Gridded) — VERIFIED
-  { id: "nstar", name: "NSTAR", category: "Ion EP", isp: 3100, thrust: 0.092, power: 2300, mass: 26,
-    massBkdn: { engine: 8.2, tanks: 0, radiators: 0, powerSource: 0, pmad: 14.8, structure: 3 },
-    description: "VERIFIED: NASA GRC — 92 mN, 3100s at 2.3 kW. Flight masses: thruster 8.2 kg, PPU 14.77 kg, DCIU 2.51 kg = 25.5 kg. DS1 & Dawn.", trl: 9 },
-  { id: "next_c", name: "NEXT-C", category: "Ion EP", isp: 4100, thrust: 0.236, power: 7400, mass: 52,
-    massBkdn: { engine: 13.5, tanks: 0, radiators: 0, powerSource: 0, pmad: 30, structure: 8.5 },
-    description: "VERIFIED: NASA GRC/Aerojet — 236 mN max, >4100s Isp, 7.4 kW max. Thruster 13.5 kg. PPU est ~30 kg. Flew on DART (2021).", trl: 9 },
-
-  // VASIMR — VERIFIED (performance) / ESTIMATED (system mass)
-  { id: "vasimr_200", name: "VASIMR VX-200SS", category: "Plasma EP", isp: 4900, thrust: 5.8, power: 200000, mass: 620,
-    massBkdn: { engine: 150, tanks: 0, radiators: 100, powerSource: 0, pmad: 200, structure: 170 },
-    description: "VERIFIED perf: Ad Astra — 5.8 N, 4900s, 72% eff at 200 kW (argon). 88-hr endurance at 80 kW. System mass 620 kg ESTIMATED.", trl: 5 },
-
-  // Fission NEP — PROJECTED (system-level concepts from NASA studies)
-  { id: "fission_nep_1mw", name: "Fission NEP 1MW", category: "Fission NEP", isp: 2500, thrust: 50, power: 1000000, mass: 30000,
-    massBkdn: { engine: 500, tanks: 0, radiators: 10000, powerSource: 12000, pmad: 4500, structure: 3000 },
-    description: "PROJECTED: Conceptual 1MW fission NEP. α≈30 kg/kW per Natl Academies 2021. Hall cluster. Mass breakdown from NASA DRA 5.0 studies.", trl: 3 },
-  { id: "fission_nep_2mw_adv", name: "Fission NEP 2MW (Adv)", category: "Fission NEP", isp: 2500, thrust: 100, power: 2000000, mass: 40000,
-    massBkdn: { engine: 1000, tanks: 0, radiators: 14000, powerSource: 16000, pmad: 5000, structure: 4000 },
-    description: "PROJECTED: Advanced 2MW fission NEP. α≈20 kg/kW. Brayton conversion. Mass from NASA technology roadmaps.", trl: 2 },
-
-  // Fusion — PROJECTED (all paper studies)
+  // Fusion — PROJECTED (Princeton NIAC studies)
   { id: "dfd_1mw", name: "DFD 1MW", category: "Fusion", isp: 10000, thrust: 8, power: 1000000, mass: 4000,
     massBkdn: { engine: 800, tanks: 0, radiators: 800, powerSource: 1200, pmad: 600, structure: 600 },
     description: "PROJECTED: Princeton Satellite Systems / PPPL — D-³He PFRC. α≈4 kg/kW. From NIAC Phase I/II studies. No hardware at this scale.", trl: 2 },
   { id: "dfd_2mw", name: "DFD 2MW", category: "Fusion", isp: 10000, thrust: 16, power: 2000000, mass: 8000,
     massBkdn: { engine: 1600, tanks: 0, radiators: 1600, powerSource: 2400, pmad: 1200, structure: 1200 },
     description: "PROJECTED: Scaled DFD concept. 2MW class. Numbers from Princeton NIAC scaling studies.", trl: 2 },
-  { id: "fdr_msnw", name: "Fusion Driven Rocket", category: "Fusion", isp: 3000, thrust: 40000, power: 0, mass: 5000,
-    massBkdn: { engine: 2000, tanks: 0, radiators: 500, powerSource: 1500, pmad: 500, structure: 500 },
-    description: "PROJECTED: MSNW/UW — pulsed magneto-inertial fusion. STTR funded. ve >30 km/s. All numbers from concept papers.", trl: 2 },
 ];
 
 // ─── TRAJECTORY DATABASE ───
@@ -902,10 +839,8 @@ export default function App() {
 
   // Comparator state
   const [compareItems, setCompareItems] = useState([
-    { thrusterId: "raptor2_vac", trajId: "hohmann", payload: 50000, propellant: 200000, num: 6 },
-    { thrusterId: "dfd_1mw", trajId: "low_thrust_spiral", payload: 50000, propellant: 20000, num: 1 },
-    { thrusterId: "fission_nep_1mw", trajId: "low_thrust_spiral", payload: 50000, propellant: 20000, num: 1 },
-    { thrusterId: "nerva", trajId: "hohmann", payload: 50000, propellant: 80000, num: 1 },
+    { thrusterId: "dfd_1mw", trajId: "hohmann", payload: 50000, propellant: 20000, num: 1 },
+    { thrusterId: "dfd_2mw", trajId: "low_thrust_spiral", payload: 50000, propellant: 20000, num: 1 },
   ]);
 
   const categories = useMemo(() => ["All", ...new Set(THRUSTER_DB.map(t => t.category))], []);
@@ -949,7 +884,7 @@ export default function App() {
   }
 
   function addCompareItem() {
-    setCompareItems(prev => [...prev, { thrusterId: "raptor2_vac", trajId: "hohmann", payload: 50000, propellant: 50000, num: 1 }]);
+    setCompareItems(prev => [...prev, { thrusterId: "dfd_1mw", trajId: "hohmann", payload: 50000, propellant: 20000, num: 1 }]);
   }
 
   function updateCompareItem(idx, field, val) {
@@ -1590,10 +1525,10 @@ export default function App() {
 
               <Card title="Quick Comparison" style={{ marginTop: 16 }}>
                 <div style={{ fontSize: 11, color: S.textDim, marginBottom: 8 }}>Same trajectory, different thrusters:</div>
-                {["raptor2_vac", "nerva", "dfd_1mw", "fission_nep_1mw"].map(tid => {
+                {["dfd_1mw", "dfd_2mw"].map(tid => {
                   const thr = thrusters.find(t => t.id === tid);
                   if (!thr) return null;
-                  const r = computeMission(thr, missionTrajectory, payloadMass, propellantMass, tid === "raptor2_vac" ? 6 : 1);
+                  const r = computeMission(thr, missionTrajectory, payloadMass, propellantMass, 1);
                   return (
                     <div key={tid} style={{
                       display: "flex", justifyContent: "space-between", alignItems: "center",
