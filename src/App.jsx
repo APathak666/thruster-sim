@@ -837,11 +837,6 @@ export default function App() {
   const [propellantMass, setPropellantMass] = useState(20000);
   const [numThrusters, setNumThrusters] = useState(1);
 
-  // Comparator state
-  const [compareItems, setCompareItems] = useState([
-    { thrusterId: "dfd_1mw", trajId: "hohmann", payload: 50000, propellant: 20000, num: 1 },
-    { thrusterId: "dfd_2mw", trajId: "low_thrust_spiral", payload: 50000, propellant: 20000, num: 1 },
-  ]);
 
   const categories = useMemo(() => ["All", ...new Set(THRUSTER_DB.map(t => t.category))], []);
   const filteredThrusters = useMemo(() =>
@@ -862,12 +857,6 @@ export default function App() {
     : TRAJECTORY_DB.find(t => t.id === missionTrajId) || TRAJECTORY_DB[0];
   const missionResult = computeMission(missionThruster, missionTrajectory, payloadMass, propellantMass, numThrusters);
 
-  const compareResults = compareItems.map(item => {
-    const thr = thrusters.find(t => t.id === item.thrusterId) || thrusters[0];
-    const traj = TRAJECTORY_DB.find(t => t.id === item.trajId) || TRAJECTORY_DB[0];
-    return { ...item, thruster: thr, trajectory: traj, result: computeMission(thr, traj, item.payload, item.propellant, item.num) };
-  });
-
   const thrusterFeasibility = useMemo(() => {
     const map = {};
     thrusters.forEach(t => {
@@ -883,22 +872,10 @@ export default function App() {
     setCustomThruster({ ...customThruster, name: "My Custom Thruster " + (thrusters.length + 1) });
   }
 
-  function addCompareItem() {
-    setCompareItems(prev => [...prev, { thrusterId: "dfd_1mw", trajId: "hohmann", payload: 50000, propellant: 20000, num: 1 }]);
-  }
-
-  function updateCompareItem(idx, field, val) {
-    setCompareItems(prev => prev.map((item, i) => i === idx ? { ...item, [field]: val } : item));
-  }
-
-  function removeCompareItem(idx) {
-    setCompareItems(prev => prev.filter((_, i) => i !== idx));
-  }
 
   const tabs = [
     { id: "mission", label: "Mission Planner" },
     { id: "lab", label: "Thruster Lab" },
-    { id: "compare", label: "Comparator" },
     { id: "orbit", label: "Orbital View" },
   ];
 
@@ -1313,158 +1290,6 @@ export default function App() {
                     </>
                   );
                 })()}
-              </Card>
-            </div>
-          </div>
-        )}
-
-        {/* ═══ COMPARATOR ═══ */}
-        {tab === "compare" && (
-          <div>
-            {/* Config rows */}
-            <Card title="Mission Pairings" headerRight={
-              <button onClick={addCompareItem} style={{
-                padding: "3px 12px", background: S.accent, color: "#000", border: "none",
-                borderRadius: 4, fontWeight: 700, fontSize: 11, cursor: "pointer",
-              }}>+ Add</button>
-            }>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {compareItems.map((item, idx) => (
-                  <div key={idx} style={{
-                    display: "grid", gridTemplateColumns: "1fr 1fr 100px 100px 60px 32px", gap: 8, alignItems: "end",
-                    padding: "8px 0", borderBottom: idx < compareItems.length - 1 ? `1px solid ${S.border}` : "none",
-                  }}>
-                    <Select label={idx === 0 ? "Thruster" : ""} value={item.thrusterId} onChange={v => updateCompareItem(idx, "thrusterId", v)}
-                      options={thrusters.map(t => ({ value: t.id, label: t.name }))} />
-                    <Select label={idx === 0 ? "Trajectory" : ""} value={item.trajId} onChange={v => updateCompareItem(idx, "trajId", v)}
-                      options={TRAJECTORY_DB.map(t => ({ value: t.id, label: t.name }))} />
-                    <Input label={idx === 0 ? "Payload (kg)" : ""} value={item.payload} onChange={v => updateCompareItem(idx, "payload", v)} min={100} />
-                    <Input label={idx === 0 ? "Propellant (kg)" : ""} value={item.propellant} onChange={v => updateCompareItem(idx, "propellant", v)} min={100} />
-                    <Input label={idx === 0 ? "# Eng" : ""} value={item.num} onChange={v => updateCompareItem(idx, "num", v)} min={1} />
-                    <button onClick={() => removeCompareItem(idx)} style={{
-                      padding: 4, background: "transparent", border: `1px solid ${S.border}`,
-                      borderRadius: 4, color: S.danger, cursor: "pointer", fontSize: 14, marginBottom: 8,
-                    }}>×</button>
-                  </div>
-                ))}
-              </div>
-            </Card>
-
-            {/* Comparison table */}
-            <Card title="Results Comparison" style={{ marginTop: 16 }}>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead>
-                    <tr style={{ borderBottom: `2px solid ${S.border}` }}>
-                      {["Config", "Feasible", "ΔV Cap (km/s)", "ΔV Req (km/s)", "Margin", "Transit", "Burn", "m₀ (t)", "Mass Ratio", "Prop Used (t)", "Prop Left (t)", "Accel₀ (mm/s²)", "α (W/kg)"].map(h => (
-                        <th key={h} style={{ padding: "8px 6px", textAlign: "left", color: S.textDim, fontWeight: 600, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {compareResults.map((cr, idx) => (
-                      <tr key={idx} style={{ borderBottom: `1px solid ${S.border}`, background: idx % 2 === 0 ? "transparent" : S.surfaceHi + "44" }}>
-                        <td style={{ padding: "8px 6px" }}>
-                          <div style={{ fontWeight: 700, fontSize: 12 }}>{cr.thruster.name}</div>
-                          <div style={{ fontSize: 10, color: S.textDim }}>{cr.trajectory.name}</div>
-                        </td>
-                        <td style={{ padding: "8px 6px", color: cr.result.feasible ? S.accent : S.danger, fontWeight: 700 }}>
-                          {cr.result.feasible ? "YES" : "NO"}
-                        </td>
-                        <td style={{ padding: "8px 6px" }}>{(cr.result.dvCapability / 1000).toFixed(1)}</td>
-                        <td style={{ padding: "8px 6px" }}>{(cr.result.dvRequired / 1000).toFixed(1)}</td>
-                        <td style={{ padding: "8px 6px", color: cr.result.dvMargin >= 0 ? S.accent : S.danger }}>
-                          {(cr.result.dvMargin / 1000).toFixed(1)}
-                        </td>
-                        <td style={{ padding: "8px 6px", fontWeight: 700 }}>{cr.result.transitDays ? formatDays(cr.result.transitDays) : "—"}</td>
-                        <td style={{ padding: "8px 6px" }}>{formatDays(cr.result.burnTimeDays)}</td>
-                        <td style={{ padding: "8px 6px" }}>{(cr.result.m0 / 1000).toFixed(1)}</td>
-                        <td style={{ padding: "8px 6px" }}>{cr.result.massRatio.toFixed(2)}</td>
-                        <td style={{ padding: "8px 6px" }}>{(cr.result.propUsed / 1000).toFixed(1)}</td>
-                        <td style={{ padding: "8px 6px", color: cr.result.propRemaining > 0 ? S.accent : S.warn }}>
-                          {(cr.result.propRemaining / 1000).toFixed(1)}
-                        </td>
-                        <td style={{ padding: "8px 6px" }}>{(cr.result.a0 * 1000).toFixed(3)}</td>
-                        <td style={{ padding: "8px 6px" }}>{formatNum(cr.result.alpha, 1)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-
-            {/* Visual comparisons */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
-              <Card title="Transit Time Comparison">
-                <ResponsiveContainer width="100%" height={180}>
-                  <BarChart data={compareResults.map(cr => ({
-                    name: cr.thruster.name.substring(0, 12),
-                    transit: cr.result.transitDays || 0,
-                    burn: cr.result.burnTimeDays || 0,
-                    color: CAT_COLORS[cr.thruster.category],
-                  }))}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={S.border} />
-                    <XAxis dataKey="name" tick={{ fill: S.textDim, fontSize: 9 }} angle={-20} />
-                    <YAxis tick={{ fill: S.textDim, fontSize: 10 }}
-                      label={{ value: "Days", angle: -90, position: "left", fill: S.textDim, fontSize: 10 }} />
-                    <Tooltip contentStyle={{ background: S.surfaceHi, border: `1px solid ${S.border}`, fontSize: 11, borderRadius: 4 }} />
-                    <Bar dataKey="transit" name="Transit" fill={S.accent} radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="burn" name="Burn" fill={S.info} radius={[4, 4, 0, 0]} />
-                    <Legend wrapperStyle={{ fontSize: 10 }} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </Card>
-
-              <Card title="ΔV Budget Comparison">
-                <ResponsiveContainer width="100%" height={180}>
-                  <BarChart data={compareResults.map(cr => ({
-                    name: cr.thruster.name.substring(0, 12),
-                    capability: cr.result.dvCapability / 1000,
-                    required: cr.result.dvRequired / 1000,
-                  }))}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={S.border} />
-                    <XAxis dataKey="name" tick={{ fill: S.textDim, fontSize: 9 }} angle={-20} />
-                    <YAxis tick={{ fill: S.textDim, fontSize: 10 }}
-                      label={{ value: "km/s", angle: -90, position: "left", fill: S.textDim, fontSize: 10 }} />
-                    <Tooltip contentStyle={{ background: S.surfaceHi, border: `1px solid ${S.border}`, fontSize: 11, borderRadius: 4 }} />
-                    <Bar dataKey="capability" name="ΔV Capability" fill={S.accent} radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="required" name="ΔV Required" fill={S.danger} radius={[4, 4, 0, 0]} />
-                    <Legend wrapperStyle={{ fontSize: 10 }} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </Card>
-
-              <Card title="Mass Ratio Comparison">
-                <ResponsiveContainer width="100%" height={180}>
-                  <BarChart data={compareResults.map(cr => ({
-                    name: cr.thruster.name.substring(0, 12),
-                    massRatio: cr.result.massRatio,
-                    propFraction: (cr.result.propUsed / cr.result.m0) * 100,
-                  }))}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={S.border} />
-                    <XAxis dataKey="name" tick={{ fill: S.textDim, fontSize: 9 }} angle={-20} />
-                    <YAxis tick={{ fill: S.textDim, fontSize: 10 }} />
-                    <Tooltip contentStyle={{ background: S.surfaceHi, border: `1px solid ${S.border}`, fontSize: 11, borderRadius: 4 }} />
-                    <Bar dataKey="massRatio" name="Mass Ratio (m₀/mf)" fill={S.warn} radius={[4, 4, 0, 0]} />
-                    <Legend wrapperStyle={{ fontSize: 10 }} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </Card>
-
-              <Card title="Specific Power (α) Comparison">
-                <ResponsiveContainer width="100%" height={180}>
-                  <BarChart data={compareResults.map(cr => ({
-                    name: cr.thruster.name.substring(0, 12),
-                    alpha: cr.result.alpha,
-                  }))} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" stroke={S.border} />
-                    <YAxis type="category" dataKey="name" tick={{ fill: S.textDim, fontSize: 9 }} width={90} />
-                    <XAxis type="number" tick={{ fill: S.textDim, fontSize: 10 }} scale="log" domain={['auto', 'auto']}
-                      label={{ value: "W/kg (log)", position: "bottom", fill: S.textDim, fontSize: 10 }} />
-                    <Tooltip contentStyle={{ background: S.surfaceHi, border: `1px solid ${S.border}`, fontSize: 11, borderRadius: 4 }} />
-                    <Bar dataKey="alpha" name="α (W/kg)" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
               </Card>
             </div>
           </div>
